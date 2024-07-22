@@ -549,60 +549,8 @@ type appInfo struct {
 
 // checkAndSetDefaults checks the app route, applies cli flags, and sets defaults.
 func (a *appInfo) checkAndSetDefaults(cf *CLIConf, tc *client.TeleportClient, profile *client.ProfileStatus) error {
-	a.profile = profile
-
-	switch {
-	case a.IsAWSConsole():
-		app, err := a.GetApp(cf.Context, tc)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
-		awsRoleARN, err := getARNFromFlags(cf, profile, app)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		a.AWSRoleARN = awsRoleARN
-
-	case a.IsAzureCloud():
-		azureIdentity, err := getAzureIdentityFromFlags(cf, profile)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		log.Debugf("Azure identity is %q", azureIdentity)
-		a.AzureIdentity = azureIdentity
-
-	case a.IsGCP():
-		gcpServiceAccount, err := getGCPServiceAccountFromFlags(cf, profile)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		log.Debugf("GCP service account is %q", gcpServiceAccount)
-		a.GCPServiceAccount = gcpServiceAccount
-	}
 
 	return nil
-}
-
-func (a *appInfo) IsAWSConsole() bool {
-	if a.app != nil {
-		return a.app.IsAWSConsole()
-	}
-	return a.RouteToApp.AWSRoleARN != ""
-}
-
-func (a *appInfo) IsAzureCloud() bool {
-	if a.app != nil {
-		return a.app.IsAzureCloud()
-	}
-	return a.RouteToApp.AzureIdentity != ""
-}
-
-func (a *appInfo) IsGCP() bool {
-	if a.app != nil {
-		return a.app.IsGCP()
-	}
-	return a.RouteToApp.GCPServiceAccount != ""
 }
 
 func (a *appInfo) appLocalCAPath(cluster string) string {

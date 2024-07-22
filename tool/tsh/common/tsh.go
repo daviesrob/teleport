@@ -79,7 +79,7 @@ import (
 	"github.com/gravitational/teleport/lib/defaults"
 	dtauthn "github.com/gravitational/teleport/lib/devicetrust/authn"
 	dtenroll "github.com/gravitational/teleport/lib/devicetrust/enroll"
-	"github.com/gravitational/teleport/lib/kube/kubeconfig"
+	// "github.com/gravitational/teleport/lib/kube/kubeconfig"
 	"github.com/gravitational/teleport/lib/modules"
 	"github.com/gravitational/teleport/lib/observability/tracing"
 	"github.com/gravitational/teleport/lib/services"
@@ -416,23 +416,6 @@ type CLIConf struct {
 
 	// Exec is the command to run via tsh aws.
 	Exec string
-	// AWSRole is Amazon Role ARN or role name that will be used for AWS CLI access.
-	AWSRole string
-	// AWSCommandArgs contains arguments that will be forwarded to AWS CLI binary.
-	AWSCommandArgs []string
-	// AWSEndpointURLMode is an AWS proxy mode that serves an AWS endpoint URL
-	// proxy instead of an HTTPS proxy.
-	AWSEndpointURLMode bool
-
-	// AzureIdentity is Azure identity that will be used for Azure CLI access.
-	AzureIdentity string
-	// AzureCommandArgs contains arguments that will be forwarded to Azure CLI binary.
-	AzureCommandArgs []string
-
-	// GCPServiceAccount is GCP service account name that will be used for GCP CLI access.
-	GCPServiceAccount string
-	// GCPCommandArgs contains arguments that will be forwarded to GCP CLI binary.
-	GCPCommandArgs []string
 
 	// Reason is the reason for starting an ssh or kube session.
 	Reason string
@@ -793,28 +776,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	daemonStop := daemon.Command("stop", "Gracefully stops a process on Windows by sending Ctrl-Break to it.").Hidden()
 	daemonStop.Flag("pid", "PID to be stopped").IntVar(&cf.DaemonPid)
 
-	// AWS.
-	// Use Interspersed(false) to forward all flags to AWS CLI.
-	aws := app.Command("aws", "Access AWS API.").Interspersed(false)
-	aws.Arg("command", "AWS command and subcommands arguments that are going to be forwarded to AWS CLI.").StringsVar(&cf.AWSCommandArgs)
-	aws.Flag("app", "Optional Name of the AWS application to use if logged into multiple.").StringVar(&cf.AppName)
-	aws.Flag("endpoint-url", "Run local proxy to serve as an AWS endpoint URL. If not specified, local proxy serves as an HTTPS proxy.").
-		Short('e').Hidden().BoolVar(&cf.AWSEndpointURLMode)
-	aws.Flag("exec", "Execute different commands (e.g. terraform) under Teleport credentials").StringVar(&cf.Exec)
-
-	azure := app.Command("az", "Access Azure API.").Interspersed(false)
-	azure.Arg("command", "`az` command and subcommands arguments that are going to be forwarded to Azure CLI.").StringsVar(&cf.AzureCommandArgs)
-	azure.Flag("app", "Optional name of the Azure application to use if logged into multiple.").StringVar(&cf.AppName)
-
-	gcloud := app.Command("gcloud", "Access GCP API with the gcloud command.").Interspersed(false)
-	gcloud.Arg("command", "`gcloud` command and subcommands arguments.").StringsVar(&cf.GCPCommandArgs)
-	gcloud.Flag("app", "Optional name of the GCP application to use if logged into multiple.").StringVar(&cf.AppName)
-	gcloud.Alias("gcp")
-
-	gsutil := app.Command("gsutil", "Access Google Cloud Storage with the gsutil command.").Interspersed(false)
-	gsutil.Arg("command", "`gsutil` command and subcommands arguments.").StringsVar(&cf.GCPCommandArgs)
-	gsutil.Flag("app", "Optional name of the GCP application to use if logged into multiple.").StringVar(&cf.AppName)
-
 	// Applications.
 	apps := app.Command("apps", "View and control proxied applications.").Alias("app")
 	apps.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
@@ -827,9 +788,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	lsApps.Flag("all", "List apps from all clusters and proxies.").Short('R').BoolVar(&cf.ListAll)
 	appLogin := apps.Command("login", "Retrieve short-lived certificate for an app.")
 	appLogin.Arg("app", "App name to retrieve credentials for. Can be obtained from `tsh apps ls` output.").Required().StringVar(&cf.AppName)
-	appLogin.Flag("aws-role", "(For AWS CLI access only) Amazon IAM role ARN or role name.").StringVar(&cf.AWSRole)
-	appLogin.Flag("azure-identity", "(For Azure CLI access only) Azure managed identity name.").StringVar(&cf.AzureIdentity)
-	appLogin.Flag("gcp-service-account", "(For GCP CLI access only) GCP service account name.").StringVar(&cf.GCPServiceAccount)
 	appLogin.Flag("quiet", "Quiet mode").Short('q').BoolVar(&cf.Quiet)
 	appLogout := apps.Command("logout", "Remove app certificate.")
 	appLogout.Arg("app", "App to remove credentials for.").StringVar(&cf.AppName)
@@ -1373,14 +1331,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		err = onRequestDrop(&cf)
 	case config.FullCommand():
 		err = onConfig(&cf)
-	case aws.FullCommand():
-		err = onAWS(&cf)
-	case azure.FullCommand():
-		err = onAzure(&cf)
-	case gcloud.FullCommand():
-		err = onGcloud(&cf)
-	case gsutil.FullCommand():
-		err = onGsutil(&cf)
 	case daemonStart.FullCommand():
 		err = onDaemonStart(&cf)
 	case daemonStop.FullCommand():
@@ -1955,32 +1905,12 @@ func onLogout(cf *CLIConf) error {
 			return trace.Wrap(err)
 		}
 
-		// Remove Teleport related entries from kubeconfig.
-		log.Debugf("Removing Teleport related entries with server '%v' from kubeconfig.", tc.KubeClusterAddr())
-		err = kubeconfig.RemoveByServerAddr("", tc.KubeClusterAddr())
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
 		fmt.Printf("Logged out %v from %v.\n", cf.Username, proxyHost)
 	// Remove all keys.
 	case proxyHost == "" && cf.Username == "":
 		tc, err := makeClient(cf)
 		if err != nil {
 			return trace.Wrap(err)
-		}
-		log.Debugf("Removing Teleport related entries with server '%v' from kubeconfig.", tc.KubeClusterAddr())
-		if err = kubeconfig.RemoveByServerAddr("", tc.KubeClusterAddr()); err != nil {
-			return trace.Wrap(err)
-		}
-
-		// Remove Teleport related entries from kubeconfig for all clusters.
-		for _, profile := range profiles {
-			log.Debugf("Removing Teleport related entries for cluster '%v' from kubeconfig.", profile.Cluster)
-			err = kubeconfig.RemoveByClusterName("", profile.Cluster)
-			if err != nil {
-				return trace.Wrap(err)
-			}
 		}
 
 		// Remove all database access related profiles as well such as Postgres
@@ -4478,7 +4408,6 @@ func makeProfileInfo(p *client.ProfileStatus, env map[string]string, isActive bo
 		}
 	}
 
-	selectedKubeCluster, _ := kubeconfig.SelectedKubeCluster("", p.Cluster)
 	out := &profileInfo{
 		ProxyURL:           p.ProxyURL.String(),
 		Username:           p.Username,
@@ -4487,10 +4416,6 @@ func makeProfileInfo(p *client.ProfileStatus, env map[string]string, isActive bo
 		Roles:              p.Roles,
 		Traits:             p.Traits,
 		Logins:             logins,
-		KubernetesEnabled:  p.KubeEnabled,
-		KubernetesCluster:  selectedKubeCluster,
-		KubernetesUsers:    p.KubeUsers,
-		KubernetesGroups:   p.KubeGroups,
 		Databases:          p.DatabaseServices(),
 		ValidUntil:         p.ValidUntil,
 		Extensions:         p.Extensions,
@@ -4944,14 +4869,8 @@ func onEnvironment(cf *CLIConf) error {
 			fmt.Printf("unset %v\n", kubeClusterEnvVar)
 			fmt.Printf("unset %v\n", teleport.EnvKubeConfig)
 		case !cf.unsetEnvironment:
-			kubeName, _ := kubeconfig.SelectedKubeCluster("", profile.Cluster)
 			fmt.Printf("export %v=%v\n", proxyEnvVar, profile.ProxyURL.Host)
 			fmt.Printf("export %v=%v\n", clusterEnvVar, profile.Cluster)
-			if kubeName != "" {
-				fmt.Printf("export %v=%v\n", kubeClusterEnvVar, kubeName)
-				fmt.Printf("# set %v to a standalone kubeconfig for the selected kube cluster\n", teleport.EnvKubeConfig)
-				fmt.Printf("export %v=%v\n", teleport.EnvKubeConfig, profile.KubeConfigPath(kubeName))
-			}
 		}
 	case teleport.JSON, teleport.YAML:
 		out, err := serializeEnvironment(profile, format)
@@ -4968,11 +4887,6 @@ func serializeEnvironment(profile *client.ProfileStatus, format string) (string,
 	env := map[string]string{
 		proxyEnvVar:   profile.ProxyURL.Host,
 		clusterEnvVar: profile.Cluster,
-	}
-	kubeName, _ := kubeconfig.SelectedKubeCluster("", profile.Cluster)
-	if kubeName != "" {
-		env[kubeClusterEnvVar] = kubeName
-		env[teleport.EnvKubeConfig] = profile.KubeConfigPath(kubeName)
 	}
 	var out []byte
 	var err error

@@ -33,7 +33,6 @@ import (
 var supportedResourceKinds = []string{
 	types.KindNode,
 	types.KindDatabase,
-	types.KindKubernetesCluster,
 	types.KindApp,
 	types.KindSAMLIdPServiceProvider,
 }
@@ -123,24 +122,6 @@ func List(ctx context.Context, cluster *clusters.Cluster, client apiclient.ListU
 				},
 				RequiresRequest: requiresRequest,
 			})
-		case types.KubeCluster:
-			kubeCluster := r
-			response.Resources = append(response.Resources, UnifiedResource{
-				Kube: &clusters.Kube{
-					URI:               cluster.URI.AppendKube(kubeCluster.GetName()),
-					KubernetesCluster: kubeCluster,
-				},
-				RequiresRequest: requiresRequest,
-			})
-		case types.KubeServer:
-			kubeCluster := r.GetCluster()
-			response.Resources = append(response.Resources, UnifiedResource{
-				Kube: &clusters.Kube{
-					URI:               cluster.URI.AppendKube(kubeCluster.GetName()),
-					KubernetesCluster: kubeCluster,
-				},
-				RequiresRequest: requiresRequest,
-			})
 		}
 	}
 
@@ -157,7 +138,6 @@ type ListResponse struct {
 type UnifiedResource struct {
 	Server                 *clusters.Server
 	Database               *clusters.Database
-	Kube                   *clusters.Kube
 	App                    *clusters.App
 	SAMLIdPServiceProvider *clusters.SAMLIdPServiceProvider
 	RequiresRequest        bool

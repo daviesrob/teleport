@@ -21,7 +21,6 @@ package common
 import (
 	"fmt"
 	"path"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -31,9 +30,7 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/accessrequest"
-	"github.com/gravitational/teleport/api/client"
 	"github.com/gravitational/teleport/api/client/proto"
-	kubeproto "github.com/gravitational/teleport/api/gen/proto/go/teleport/kube/v1"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/asciitable"
 	"github.com/gravitational/teleport/lib/auth/authclient"
@@ -410,27 +407,6 @@ func onRequestSearch(cf *CLIConf) error {
 	var resources types.ResourcesWithLabels
 	var tableColumns []string
 	switch {
-	case slices.Contains(types.KubernetesResourcesKinds, cf.ResourceKind):
-		proxyGRPCClient, err := tc.NewKubernetesServiceClient(cf.Context, tc.SiteName)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		req := kubeproto.ListKubernetesResourcesRequest{
-			ResourceType:        cf.ResourceKind,
-			Labels:              tc.Labels,
-			PredicateExpression: cf.PredicateExpression,
-			SearchKeywords:      tc.SearchKeywords,
-			UseSearchAsRoles:    true,
-			KubernetesCluster:   cf.KubernetesCluster,
-			TeleportCluster:     tc.SiteName,
-		}
-
-		resources, err = client.GetKubernetesResourcesWithFilters(cf.Context, proxyGRPCClient, &req)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
-		tableColumns = []string{"Name", "Namespace", "Labels", "Resource ID"}
 	default:
 		// For all other resources, we need to connect to the auth server.
 		clusterClient, err := tc.ConnectToCluster(cf.Context)

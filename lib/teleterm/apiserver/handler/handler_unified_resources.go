@@ -78,14 +78,6 @@ func (s *Handler) ListUnifiedResources(ctx context.Context, req *api.ListUnified
 				RequiresRequest: resource.RequiresRequest,
 			})
 		}
-		if resource.Kube != nil {
-			response.Resources = append(response.Resources, &api.PaginatedResource{
-				Resource: &api.PaginatedResource_Kube{
-					Kube: newAPIKube(*resource.Kube),
-				},
-				RequiresRequest: resource.RequiresRequest,
-			})
-		}
 		if resource.App != nil {
 			response.Resources = append(response.Resources, &api.PaginatedResource{
 				Resource: &api.PaginatedResource_App{

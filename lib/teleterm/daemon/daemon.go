@@ -496,10 +496,6 @@ func (s *Service) GetGatewayCLICommand(ctx context.Context, gateway gateway.Gate
 		cmds, err := cmd.NewDBCLICommand(ctx, cluster, gateway, clusterClient.AuthClient)
 		return cmds, trace.Wrap(err)
 
-	case targetURI.IsKube():
-		cmds, err := cmd.NewKubeCLICommand(gateway)
-		return cmds, trace.Wrap(err)
-
 	case targetURI.IsApp():
 		blankCmd := exec.Command("")
 		return cmd.Cmds{Exec: blankCmd, Preview: blankCmd}, nil
@@ -793,25 +789,6 @@ func (s *Service) AssumeRole(ctx context.Context, req *api.AssumeRoleRequest) er
 	return trace.Wrap(s.ClearCachedClientsForRoot(cluster.URI))
 }
 
-// GetKubes accepts parameterized input to enable searching, sorting, and pagination.
-func (s *Service) GetKubes(ctx context.Context, req *api.GetKubesRequest) (*clusters.GetKubesResponse, error) {
-	cluster, _, err := s.ResolveCluster(req.ClusterUri)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	proxyClient, err := s.GetCachedClient(ctx, cluster.URI)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	response, err := cluster.GetKubes(ctx, proxyClient.CurrentCluster(), req)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	return response, nil
-}
 
 func (s *Service) ReportUsageEvent(req *api.ReportUsageEventRequest) error {
 	prehogEvent, err := usagereporter.GetAnonymizedPrehogEvent(req)
@@ -1132,11 +1109,6 @@ func (s *Service) AuthenticateWebDevice(ctx context.Context, rootClusterURI uri.
 }
 
 func (s *Service) shouldReuseGateway(targetURI uri.ResourceURI) (gateway.Gateway, bool) {
-	// A single gateway can be shared for all terminals of the same kube
-	// cluster.
-	if targetURI.IsKube() {
-		return s.findGatewayByTargetURI(targetURI)
-	}
 	return nil, false
 }
 

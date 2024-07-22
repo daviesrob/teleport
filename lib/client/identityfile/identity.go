@@ -43,7 +43,6 @@ import (
 	"github.com/gravitational/teleport/api/utils/keys"
 	"github.com/gravitational/teleport/api/utils/prompt"
 	"github.com/gravitational/teleport/lib/client"
-	"github.com/gravitational/teleport/lib/kube/kubeconfig"
 	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
@@ -435,37 +434,6 @@ func Write(ctx context.Context, cfg WriteConfig) (filesWritten []string, err err
 			return nil, trace.Wrap(err)
 		}
 		filesWritten = append(filesWritten, out...)
-
-	case FormatKubernetes:
-		filesWritten = append(filesWritten, cfg.OutputPath)
-		// If the user does not want to override, it will merge the previous kubeconfig
-		// with the new entry.
-		if err := checkOverwrite(ctx, writer, cfg.OverwriteDestination, filesWritten...); err != nil && !trace.IsAlreadyExists(err) {
-			return nil, trace.Wrap(err)
-		} else if err == nil {
-			// Clean up the existing file, if it exists.
-			// This is used when the user wants to overwrite an existing kubeconfig.
-			// Without it, kubeconfig.Update would try to parse it and merge in new
-			// credentials.
-			if err := writer.Remove(cfg.OutputPath); err != nil && !os.IsNotExist(err) {
-				return nil, trace.Wrap(err)
-			}
-		}
-
-		var kubeCluster []string
-		if len(cfg.KubeClusterName) > 0 {
-			kubeCluster = []string{cfg.KubeClusterName}
-		}
-
-		if err := kubeconfig.UpdateConfig(cfg.OutputPath, kubeconfig.Values{
-			TeleportClusterName: cfg.Key.ClusterName,
-			ClusterAddr:         cfg.KubeProxyAddr,
-			Credentials:         cfg.Key,
-			TLSServerName:       cfg.KubeTLSServerName,
-			KubeClusters:        kubeCluster,
-		}, cfg.KubeStoreAllCAs, writer); err != nil {
-			return nil, trace.Wrap(err)
-		}
 
 	default:
 		return nil, trace.BadParameter("unsupported identity format: %q, use one of %s", cfg.Format, KnownFileFormats)

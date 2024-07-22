@@ -39,10 +39,6 @@ func New(cfg Config) (Gateway, error) {
 		gateway, err := makeDatabaseGateway(cfg)
 		return gateway, trace.Wrap(err)
 
-	case cfg.TargetURI.IsKube():
-		gateway, err := makeKubeGateway(cfg)
-		return gateway, trace.Wrap(err)
-
 	case cfg.TargetURI.IsApp():
 		gateway, err := makeAppGateway(cfg)
 		return gateway, trace.Wrap(err)

@@ -1324,9 +1324,6 @@ type AuthenticateSSHRequest struct {
 	// CompatibilityMode sets certificate compatibility mode with old SSH clients
 	CompatibilityMode string `json:"compatibility_mode"`
 	RouteToCluster    string `json:"route_to_cluster"`
-	// KubernetesCluster sets the target kubernetes cluster for the TLS
-	// certificate. This can be empty on older clients.
-	KubernetesCluster string `json:"kubernetes_cluster"`
 	// AttestationStatement is an attestation statement associated with the given public key.
 	AttestationStatement *keys.AttestationStatement `json:"attestation_statement,omitempty"`
 }
@@ -1403,35 +1400,6 @@ func AuthoritiesToTrustedCerts(authorities []types.CertAuthority) []TrustedCerts
 	return out
 }
 
-// KubeCSR is a kubernetes CSR request
-type KubeCSR struct {
-	// Username of user's certificate
-	Username string `json:"username"`
-	// ClusterName is a name of the target cluster to generate certificate for
-	ClusterName string `json:"cluster_name"`
-	// CSR is a kubernetes CSR
-	CSR []byte `json:"csr"`
-}
-
-// CheckAndSetDefaults checks and sets defaults
-func (a *KubeCSR) CheckAndSetDefaults() error {
-	if len(a.CSR) == 0 {
-		return trace.BadParameter("missing parameter 'csr'")
-	}
-	return nil
-}
-
-// KubeCSRResponse is a response to kubernetes CSR request
-type KubeCSRResponse struct {
-	// Cert is a signed certificate PEM block
-	Cert []byte `json:"cert"`
-	// CertAuthorities is a list of PEM block with trusted cert authorities
-	CertAuthorities [][]byte `json:"cert_authorities"`
-	// TargetAddr is an optional target address
-	// of the kubernetes API server that can be set
-	// in the kubeconfig
-	TargetAddr string `json:"target_addr"`
-}
 
 // ClientI is a client to Auth service
 type ClientI interface {
@@ -1449,7 +1417,6 @@ type ClientI interface {
 	services.Apps
 	services.Databases
 	services.DatabaseServices
-	services.Kubernetes
 	services.WindowsDesktops
 	services.SAMLIdPServiceProviders
 	services.UserGroups
@@ -1460,7 +1427,6 @@ type ClientI interface {
 	services.ConnectionsDiagnostic
 	services.SAMLIdPSession
 	services.Integrations
-	services.KubeWaitingContainer
 	services.Notifications
 	services.VnetConfigGetter
 	types.Events
@@ -1526,10 +1492,6 @@ type ClientI interface {
 	// AuthenticateSSHUser authenticates SSH console user, creates and  returns a pair of signed TLS and SSH
 	// short-lived certificates as a result
 	AuthenticateSSHUser(ctx context.Context, req AuthenticateSSHRequest) (*SSHLoginResponse, error)
-
-	// ProcessKubeCSR processes CSR request against Kubernetes CA, returns
-	// signed certificate if successful.
-	ProcessKubeCSR(req KubeCSR) (*KubeCSRResponse, error)
 
 	// Ping gets basic info about the auth server.
 	Ping(ctx context.Context) (proto.PingResponse, error)

@@ -58,10 +58,6 @@ func (c *Cluster) CreateGateway(ctx context.Context, params CreateGatewayParams)
 		gateway, err := c.createDBGateway(ctx, params)
 		return gateway, trace.Wrap(err)
 
-	case params.TargetURI.IsKube():
-		gateway, err := c.createKubeGateway(ctx, params)
-		return gateway, trace.Wrap(err)
-
 	case params.TargetURI.IsApp():
 		gateway, err := c.createAppGateway(ctx, params)
 		return gateway, trace.Wrap(err)
@@ -116,44 +112,6 @@ func (c *Cluster) createDBGateway(ctx context.Context, params CreateGatewayParam
 	return gw, nil
 }
 
-func (c *Cluster) createKubeGateway(ctx context.Context, params CreateGatewayParams) (gateway.Gateway, error) {
-	kube := params.TargetURI.GetKubeName()
-
-	// Check if this kube exists and the user has access to it.
-	if _, err := c.getKube(ctx, params.ClusterClient.AuthClient, kube); err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	var cert tls.Certificate
-	var err error
-
-	if err := AddMetadataToRetryableError(ctx, func() error {
-		cert, err = c.reissueKubeCert(ctx, params.ClusterClient, kube)
-		return trace.Wrap(err)
-	}); err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	// TODO(ravicious): Support TargetUser (--as), TargetGroups (--as-groups), TargetSubresourceName (--kube-namespace).
-	gw, err := gateway.New(gateway.Config{
-		LocalPort:                     params.LocalPort,
-		TargetURI:                     params.TargetURI,
-		TargetName:                    kube,
-		Cert:                          cert,
-		Insecure:                      c.clusterClient.InsecureSkipVerify,
-		WebProxyAddr:                  c.clusterClient.WebProxyAddr,
-		Log:                           c.Log,
-		TCPPortAllocator:              params.TCPPortAllocator,
-		OnExpiredCert:                 params.OnExpiredCert,
-		Clock:                         c.clock,
-		TLSRoutingConnUpgradeRequired: c.clusterClient.TLSRoutingConnUpgradeRequired,
-		RootClusterCACertPoolFunc:     c.clusterClient.RootClusterCACertPool,
-		ClusterName:                   c.Name,
-		Username:                      c.status.Username,
-		KubeconfigsDir:                params.KubeconfigsDir,
-	})
-	return gw, trace.Wrap(err)
-}
 
 func (c *Cluster) createAppGateway(ctx context.Context, params CreateGatewayParams) (gateway.Gateway, error) {
 	appName := params.TargetURI.GetAppName()
@@ -201,9 +159,6 @@ func (c *Cluster) ReissueGatewayCerts(ctx context.Context, clusterClient *client
 			return tls.Certificate{}, trace.Wrap(err)
 		}
 		cert, err := c.reissueDBCerts(ctx, clusterClient, db.RouteToDatabase())
-		return cert, trace.Wrap(err)
-	case g.TargetURI().IsKube():
-		cert, err := c.reissueKubeCert(ctx, clusterClient, g.TargetName())
 		return cert, trace.Wrap(err)
 	case g.TargetURI().IsApp():
 		appName := g.TargetURI().GetAppName()

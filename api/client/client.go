@@ -52,7 +52,6 @@ import (
 	crownjewelapi "github.com/gravitational/teleport/api/client/crownjewel"
 	"github.com/gravitational/teleport/api/client/discoveryconfig"
 	"github.com/gravitational/teleport/api/client/externalauditstorage"
-	kubewaitingcontainerclient "github.com/gravitational/teleport/api/client/kubewaitingcontainer"
 	"github.com/gravitational/teleport/api/client/okta"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/client/scim"
@@ -71,8 +70,6 @@ import (
 	discoveryconfigv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/discoveryconfig/v1"
 	externalauditstoragev1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/externalauditstorage/v1"
 	integrationpb "github.com/gravitational/teleport/api/gen/proto/go/teleport/integration/v1"
-	kubeproto "github.com/gravitational/teleport/api/gen/proto/go/teleport/kube/v1"
-	kubewaitingcontainerpb "github.com/gravitational/teleport/api/gen/proto/go/teleport/kubewaitingcontainer/v1"
 	loginrulepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/loginrule/v1"
 	machineidv1pb "github.com/gravitational/teleport/api/gen/proto/go/teleport/machineid/v1"
 	notificationsv1pb "github.com/gravitational/teleport/api/gen/proto/go/teleport/notifications/v1"
@@ -1345,44 +1342,6 @@ func (c *Client) DeleteSemaphore(ctx context.Context, filter types.SemaphoreFilt
 	return trace.Wrap(err)
 }
 
-// GetKubernetesServers returns the list of kubernetes servers registered in the
-// cluster.
-func (c *Client) GetKubernetesServers(ctx context.Context) ([]types.KubeServer, error) {
-	servers, err := GetAllResources[types.KubeServer](ctx, c, &proto.ListResourcesRequest{
-		Namespace:    defaults.Namespace,
-		ResourceType: types.KindKubeServer,
-	})
-	return servers, trace.Wrap(err)
-}
-
-// DeleteKubernetesServer deletes a named kubernetes server.
-func (c *Client) DeleteKubernetesServer(ctx context.Context, hostID, name string) error {
-	_, err := c.grpc.DeleteKubernetesServer(ctx, &proto.DeleteKubernetesServerRequest{
-		HostID: hostID,
-		Name:   name,
-	})
-	return trace.Wrap(err)
-}
-
-// DeleteAllKubernetesServers deletes all registered kubernetes servers.
-func (c *Client) DeleteAllKubernetesServers(ctx context.Context) error {
-	_, err := c.grpc.DeleteAllKubernetesServers(ctx, &proto.DeleteAllKubernetesServersRequest{})
-	return trace.Wrap(err)
-}
-
-// UpsertKubernetesServer is used by kubernetes services to report their presence
-// to other auth servers in form of heartbeat expiring after ttl period.
-func (c *Client) UpsertKubernetesServer(ctx context.Context, s types.KubeServer) (*types.KeepAlive, error) {
-	server, ok := s.(*types.KubernetesServerV3)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T, expected *types.KubernetesServerV3", server)
-	}
-	keepAlive, err := c.grpc.UpsertKubernetesServer(ctx, &proto.UpsertKubernetesServerRequest{Server: server})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return keepAlive, nil
-}
 
 // GetApplicationServers returns all registered application servers.
 func (c *Client) GetApplicationServers(ctx context.Context, namespace string) ([]types.AppServer, error) {
@@ -3074,96 +3033,6 @@ func (c *Client) DeleteAllApps(ctx context.Context) error {
 	return trace.Wrap(err)
 }
 
-// CreateKubernetesCluster creates a new kubernetes cluster resource.
-func (c *Client) CreateKubernetesCluster(ctx context.Context, cluster types.KubeCluster) error {
-	kubeClusterV3, ok := cluster.(*types.KubernetesClusterV3)
-	if !ok {
-		return trace.BadParameter("unsupported kubernetes cluster type %T", cluster)
-	}
-	_, err := c.grpc.CreateKubernetesCluster(ctx, kubeClusterV3)
-	return trace.Wrap(err)
-}
-
-// UpdateKubernetesCluster updates existing kubernetes cluster resource.
-func (c *Client) UpdateKubernetesCluster(ctx context.Context, cluster types.KubeCluster) error {
-	kubeClusterV3, ok := cluster.(*types.KubernetesClusterV3)
-	if !ok {
-		return trace.BadParameter("unsupported kubernetes cluster type %T", cluster)
-	}
-	_, err := c.grpc.UpdateKubernetesCluster(ctx, kubeClusterV3)
-	return trace.Wrap(err)
-}
-
-// GetKubernetesCluster returns the specified kubernetes resource.
-func (c *Client) GetKubernetesCluster(ctx context.Context, name string) (types.KubeCluster, error) {
-	if name == "" {
-		return nil, trace.BadParameter("missing kubernetes cluster name")
-	}
-	cluster, err := c.grpc.GetKubernetesCluster(ctx, &types.ResourceRequest{Name: name})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return cluster, nil
-}
-
-// GetKubernetesClusters returns all kubernetes cluster resources.
-func (c *Client) GetKubernetesClusters(ctx context.Context) ([]types.KubeCluster, error) {
-	items, err := c.grpc.GetKubernetesClusters(ctx, &emptypb.Empty{})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	clusters := make([]types.KubeCluster, len(items.KubernetesClusters))
-	for i := range items.KubernetesClusters {
-		clusters[i] = items.KubernetesClusters[i]
-	}
-	return clusters, nil
-}
-
-// DeleteKubernetesCluster deletes specified kubernetes cluster resource.
-func (c *Client) DeleteKubernetesCluster(ctx context.Context, name string) error {
-	_, err := c.grpc.DeleteKubernetesCluster(ctx, &types.ResourceRequest{Name: name})
-	return trace.Wrap(err)
-}
-
-// DeleteAllKubernetesClusters deletes all kubernetes cluster resources.
-func (c *Client) DeleteAllKubernetesClusters(ctx context.Context) error {
-	_, err := c.grpc.DeleteAllKubernetesClusters(ctx, &emptypb.Empty{})
-	return trace.Wrap(err)
-}
-
-// GetKubernetesWaitingContainerClient an unadorned KubeWaitingContainers
-// client, using the underlying Auth gRPC connection.
-func (c *Client) GetKubernetesWaitingContainerClient() *kubewaitingcontainerclient.Client {
-	return kubewaitingcontainerclient.NewClient(kubewaitingcontainerpb.NewKubeWaitingContainersServiceClient(c.conn))
-}
-
-// ListKubernetesWaitingContainers lists Kubernetes ephemeral
-// containers that are waiting to be created until moderated
-// session conditions are met.
-func (c *Client) ListKubernetesWaitingContainers(ctx context.Context, pageSize int, pageToken string) ([]*kubewaitingcontainerpb.KubernetesWaitingContainer, string, error) {
-	return c.GetKubernetesWaitingContainerClient().ListKubernetesWaitingContainers(ctx, pageSize, pageToken)
-}
-
-// GetKubernetesWaitingContainer returns a Kubernetes ephemeral
-// container that are waiting to be created until moderated
-// session conditions are met.
-func (c *Client) GetKubernetesWaitingContainer(ctx context.Context, req *kubewaitingcontainerpb.GetKubernetesWaitingContainerRequest) (*kubewaitingcontainerpb.KubernetesWaitingContainer, error) {
-	return c.GetKubernetesWaitingContainerClient().GetKubernetesWaitingContainer(ctx, req)
-}
-
-// CreateKubernetesWaitingContainer creates a Kubernetes ephemeral
-// container that are waiting to be created until moderated
-// session conditions are met.
-func (c *Client) CreateKubernetesWaitingContainer(ctx context.Context, waitingPod *kubewaitingcontainerpb.KubernetesWaitingContainer) (*kubewaitingcontainerpb.KubernetesWaitingContainer, error) {
-	return c.GetKubernetesWaitingContainerClient().CreateKubernetesWaitingContainer(ctx, waitingPod)
-}
-
-// DeleteKubernetesWaitingContainer deletes a Kubernetes ephemeral
-// container that are waiting to be created until moderated
-// session conditions are met.
-func (c *Client) DeleteKubernetesWaitingContainer(ctx context.Context, req *kubewaitingcontainerpb.DeleteKubernetesWaitingContainerRequest) error {
-	return c.GetKubernetesWaitingContainerClient().DeleteKubernetesWaitingContainer(ctx, req)
-}
 
 // CreateDatabase creates a new database resource.
 func (c *Client) CreateDatabase(ctx context.Context, database types.Database) error {
@@ -3554,10 +3423,6 @@ func (c *Client) ListResources(ctx context.Context, req proto.ListResourcesReque
 			resources[i] = respResource.GetWindowsDesktop()
 		case types.KindWindowsDesktopService:
 			resources[i] = respResource.GetWindowsDesktopService()
-		case types.KindKubernetesCluster:
-			resources[i] = respResource.GetKubeCluster()
-		case types.KindKubeServer:
-			resources[i] = respResource.GetKubernetesServer()
 		case types.KindUserGroup:
 			resources[i] = respResource.GetUserGroup()
 		case types.KindAppOrSAMLIdPServiceProvider:
@@ -3643,10 +3508,6 @@ func convertEnrichedResource(resource *proto.PaginatedResource) (*types.Enriched
 	} else if r := resource.GetWindowsDesktop(); r != nil {
 		return &types.EnrichedResource{ResourceWithLabels: r, Logins: resource.Logins, RequiresRequest: resource.RequiresRequest}, nil
 	} else if r := resource.GetWindowsDesktopService(); r != nil {
-		return &types.EnrichedResource{ResourceWithLabels: r, RequiresRequest: resource.RequiresRequest}, nil
-	} else if r := resource.GetKubeCluster(); r != nil {
-		return &types.EnrichedResource{ResourceWithLabels: r, RequiresRequest: resource.RequiresRequest}, nil
-	} else if r := resource.GetKubernetesServer(); r != nil {
 		return &types.EnrichedResource{ResourceWithLabels: r, RequiresRequest: resource.RequiresRequest}, nil
 	} else if r := resource.GetUserGroup(); r != nil {
 		return &types.EnrichedResource{ResourceWithLabels: r, RequiresRequest: resource.RequiresRequest}, nil
@@ -3740,10 +3601,6 @@ func GetEnrichedResourcePage(ctx context.Context, clt GetResourcesClient, req *p
 				resource = respResource.GetWindowsDesktop()
 			case types.KindWindowsDesktopService:
 				resource = respResource.GetWindowsDesktopService()
-			case types.KindKubernetesCluster:
-				resource = respResource.GetKubeCluster()
-			case types.KindKubeServer:
-				resource = respResource.GetKubernetesServer()
 			case types.KindUserGroup:
 				resource = respResource.GetUserGroup()
 			case types.KindAppOrSAMLIdPServiceProvider:
@@ -3808,10 +3665,6 @@ func GetResourcePage[T types.ResourceWithLabels](ctx context.Context, clt GetRes
 				resource = respResource.GetWindowsDesktop()
 			case types.KindWindowsDesktopService:
 				resource = respResource.GetWindowsDesktopService()
-			case types.KindKubernetesCluster:
-				resource = respResource.GetKubeCluster()
-			case types.KindKubeServer:
-				resource = respResource.GetKubernetesServer()
 			case types.KindUserGroup:
 				resource = respResource.GetUserGroup()
 			case types.KindAppOrSAMLIdPServiceProvider:
@@ -3920,53 +3773,6 @@ func GetResourcesWithFilters(ctx context.Context, clt ListResourcesClient, req p
 	return resources, nil
 }
 
-// GetKubernetesResourcesWithFilters is a helper for getting a list of kubernetes resources with optional filtering. In addition to
-// iterating pages, it also correctly handles downsizing pages when LimitExceeded errors are encountered.
-func GetKubernetesResourcesWithFilters(ctx context.Context, clt kubeproto.KubeServiceClient, req *kubeproto.ListKubernetesResourcesRequest) ([]types.ResourceWithLabels, error) {
-	var (
-		resources []types.ResourceWithLabels
-		startKey  = req.StartKey
-		// Retrieve the complete list of resources in chunks.
-		chunkSize = req.Limit
-	)
-
-	// Set the chunk size to the default if it is not set.
-	if chunkSize == 0 {
-		chunkSize = int32(defaults.DefaultChunkSize)
-	}
-
-	for {
-		// Reset startKey to the previous page's nextKey.
-		req.StartKey = startKey
-		// Set the chunk size based on the previous chunk size error.
-		req.Limit = chunkSize
-
-		resp, err := clt.ListKubernetesResources(
-			ctx,
-			req,
-		)
-		if err != nil {
-			if trace.IsLimitExceeded(err) {
-				// Cut chunkSize in half if gRPC max message size is exceeded.
-				chunkSize = chunkSize / 2
-				// This is an extremely unlikely scenario, but better to cover it anyways.
-				if chunkSize == 0 {
-					return nil, trace.Wrap(err, "resource is too large to retrieve")
-				}
-				continue
-			}
-			return nil, trace.Wrap(err)
-		}
-
-		startKey = resp.NextKey
-
-		resources = append(resources, types.KubeResources(resp.Resources).AsResources()...)
-		if startKey == "" || len(resp.Resources) == 0 {
-			break
-		}
-	}
-	return resources, nil
-}
 
 // GetSSHTargets gets all servers that would match an equivalent ssh dial request. Note that this method
 // returns all resources directly accessible to the user *and* all resources available via 'SearchAsRoles',

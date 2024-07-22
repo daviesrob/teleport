@@ -40,7 +40,6 @@ import (
 	"github.com/gravitational/teleport/api/utils/keys"
 	"github.com/gravitational/teleport/entitlements"
 	"github.com/gravitational/teleport/lib/auth/native"
-	"github.com/gravitational/teleport/lib/automaticupgrades"
 	"github.com/gravitational/teleport/lib/tlsca"
 )
 
@@ -69,8 +68,6 @@ type Features struct {
 	RecoveryCodes bool
 	// Plugins enables hosted plugins
 	Plugins bool
-	// AutomaticUpgrades enables automatic upgrades of agents/services.
-	AutomaticUpgrades bool
 	// AccessGraph enables the usage of access graph.
 	// NOTE: this is a legacy flag that is currently used to signal
 	// that Access Graph integration is *enabled* on a cluster.
@@ -122,7 +119,6 @@ func (f Features) ToProto() *proto.Features {
 		AccessControls:             f.AccessControls,
 		AccessGraph:                f.AccessGraph,
 		AdvancedAccessWorkflows:    f.AdvancedAccessWorkflows,
-		AutomaticUpgrades:          f.AutomaticUpgrades,
 		Plugins:                    f.Plugins,
 		ProductType:                proto.ProductType(f.ProductType),
 		RecoveryCodes:              f.RecoveryCodes,
@@ -353,7 +349,6 @@ func ValidateResource(res types.Resource) error {
 }
 
 type defaultModules struct {
-	automaticUpgrades bool
 	loadDynamicValues sync.Once
 }
 
@@ -382,12 +377,8 @@ func (p *defaultModules) PrintVersion() {
 // Features returns supported features for default modules which is applied for OSS users
 // todo (michellescripts) remove deprecated features
 func (p *defaultModules) Features() Features {
-	p.loadDynamicValues.Do(func() {
-		p.automaticUpgrades = automaticupgrades.IsEnabled()
-	})
 
 	return Features{
-		AutomaticUpgrades: p.automaticUpgrades,
 		SupportType:       proto.SupportType_SUPPORT_TYPE_FREE,
 		Entitlements: map[entitlements.EntitlementKind]EntitlementInfo{
 			entitlements.App:                {Enabled: true, Limit: 0},

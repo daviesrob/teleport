@@ -1223,24 +1223,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 				Duration: cf.BenchDuration,
 			},
 		)
-	case benchListKube.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmark.KubeListBenchmark{
-				Namespace: benchKubeOpts.namespace,
-			},
-		)
-	case benchExecKube.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmark.KubeExecBenchmark{
-				Command:       cf.RemoteCommand,
-				Namespace:     benchKubeOpts.namespace,
-				PodName:       benchKubeOpts.pod,
-				ContainerName: benchKubeOpts.container,
-				Interactive:   cf.BenchInteractive,
-			},
-		)
 	case benchPostgres.FullCommand():
 		err = onBenchmark(
 			&cf,

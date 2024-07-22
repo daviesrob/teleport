@@ -172,17 +172,6 @@ type Presence interface {
 	// KeepAliveServer updates TTL of the server resource in the backend.
 	KeepAliveServer(ctx context.Context, h types.KeepAlive) error
 
-	// GetKubernetesServers returns a list of registered kubernetes servers.
-	GetKubernetesServers(context.Context) ([]types.KubeServer, error)
-
-	// DeleteKubernetesServer deletes a named kubernetes servers.
-	DeleteKubernetesServer(ctx context.Context, hostID, name string) error
-
-	// DeleteAllKubernetesServers deletes all registered kubernetes servers.
-	DeleteAllKubernetesServers(context.Context) error
-
-	// UpsertKubernetesServer registers an kubernetes server.
-	UpsertKubernetesServer(context.Context, types.KubeServer) (*types.KeepAlive, error)
 
 	// GetWindowsDesktopServices returns all registered Windows desktop services.
 	GetWindowsDesktopServices(context.Context) ([]types.WindowsDesktopService, error)

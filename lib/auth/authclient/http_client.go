@@ -321,22 +321,6 @@ func (c *HTTPClient) Delete(ctx context.Context, u string) (*roundtrip.Response,
 	return httplib.ConvertResponse(c.Client.Delete(ctx, u))
 }
 
-// ProcessKubeCSR processes CSR request against Kubernetes CA, returns
-// signed certificate if successful.
-func (c *HTTPClient) ProcessKubeCSR(req KubeCSR) (*KubeCSRResponse, error) {
-	if err := req.CheckAndSetDefaults(); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	out, err := c.PostJSON(context.TODO(), c.Endpoint("kube", "csr"), req)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	var re KubeCSRResponse
-	if err := json.Unmarshal(out.Bytes(), &re); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return &re, nil
-}
 
 // RegisterUsingToken calls the auth service API to register a new node using a registration token
 // which was previously issued via CreateToken/UpsertToken.

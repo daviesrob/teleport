@@ -53,7 +53,6 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
-	corev1 "k8s.io/api/core/v1"
 
 	"github.com/gravitational/teleport"
 	apiclient "github.com/gravitational/teleport/api/client"
@@ -488,19 +487,6 @@ type CLIConf struct {
 	// cmdRunner is a custom function to execute provided exec.Cmd. Mainly used
 	// in testing.
 	cmdRunner func(*exec.Cmd) error
-	// kubernetesImpersonationConfig allows to configure custom kubernetes impersonation values.
-	kubernetesImpersonationConfig impersonationConfig
-	// kubeNamespace allows to configure the default Kubernetes namespace.
-	kubeNamespace string
-
-	// kubeAllNamespaces allows users to search for pods in every namespace.
-	kubeAllNamespaces bool
-
-	// KubeConfigPath is the location of the Kubeconfig for the current test.
-	// Setting this value allows Teleport tests to run `tsh login` commands in
-	// parallel.
-	// It shouldn't be used outside testing.
-	KubeConfigPath string
 
 	// Client only version display.  Skips checking proxy version.
 	clientOnlyVersionCheck bool
@@ -871,94 +857,13 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	proxySSH.Arg("[user@]host", "Remote hostname and the login to use").Required().StringVar(&cf.UserHost)
 	proxySSH.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
 	proxySSH.Flag("no-resume", "Disable SSH connection resumption").Envar(noResumeEnvVar).BoolVar(&cf.DisableSSHResumption)
-	proxyDB := proxy.Command("db", "Start local TLS proxy for database connections when using Teleport in single-port mode.")
-	// don't require <db> positional argument, user can select with --labels/--query alone.
-	proxyDB.Arg("db", "The name of the database to start local proxy for").StringVar(&cf.DatabaseService)
-	proxyDB.Flag("port", "Specifies the source port used by proxy db listener").Short('p').StringVar(&cf.LocalProxyPort)
-	proxyDB.Flag("tunnel", "Open authenticated tunnel using database's client certificate so clients don't need to authenticate").BoolVar(&cf.LocalProxyTunnel)
-	proxyDB.Flag("db-user", "Database user to log in as.").Short('u').StringVar(&cf.DatabaseUser)
-	proxyDB.Flag("db-name", "Database name to log in to.").Short('n').StringVar(&cf.DatabaseName)
-	proxyDB.Flag("db-roles", "List of comma separate database roles to use for auto-provisioned user.").Short('r').StringVar(&cf.DatabaseRoles)
-	proxyDB.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
-	proxyDB.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	proxyDB.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	proxyDB.Flag("request-reason", "Reason for requesting access").StringVar(&cf.RequestReason)
-	proxyDB.Flag("disable-access-request", "Disable automatic resource access requests").BoolVar(&cf.disableAccessRequest)
 
 	proxyApp := proxy.Command("app", "Start local TLS proxy for app connection when using Teleport in single-port mode.")
 	proxyApp.Arg("app", "The name of the application to start local proxy for").Required().StringVar(&cf.AppName)
 	proxyApp.Flag("port", "Specifies the source port used by by the proxy app listener").Short('p').StringVar(&cf.LocalProxyPort)
 	proxyApp.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
 
-	proxyAWS := proxy.Command("aws", "Start local proxy for AWS access.")
-	proxyAWS.Flag("app", "Optional Name of the AWS application to use if logged into multiple.").StringVar(&cf.AppName)
-	proxyAWS.Flag("port", "Specifies the source port used by the proxy listener.").Short('p').StringVar(&cf.LocalProxyPort)
-	proxyAWS.Flag("endpoint-url", "Run local proxy to serve as an AWS endpoint URL. If not specified, local proxy serves as an HTTPS proxy.").Short('e').BoolVar(&cf.AWSEndpointURLMode)
-	proxyAWS.Flag("format", awsProxyFormatFlagDescription()).Short('f').Default(envVarDefaultFormat()).EnumVar(&cf.Format, awsProxyFormats...)
-
-	proxyAzure := proxy.Command("azure", "Start local proxy for Azure access.")
-	proxyAzure.Flag("app", "Optional Name of the Azure application to use if logged into multiple.").StringVar(&cf.AppName)
-	proxyAzure.Flag("port", "Specifies the source port used by the proxy listener.").Short('p').StringVar(&cf.LocalProxyPort)
-	proxyAzure.Flag("format", envVarFormatFlagDescription()).Short('f').Default(envVarDefaultFormat()).EnumVar(&cf.Format, envVarFormats...)
-	proxyAzure.Alias("az")
-
-	proxyGcloud := proxy.Command("gcloud", "Start local proxy for GCP access.")
-	proxyGcloud.Flag("app", "Optional Name of the GCP application to use if logged into multiple.").StringVar(&cf.AppName)
-	proxyGcloud.Flag("port", "Specifies the source port used by the proxy listener.").Short('p').StringVar(&cf.LocalProxyPort)
-	proxyGcloud.Flag("format", envVarFormatFlagDescription()).Short('f').Default(envVarDefaultFormat()).EnumVar(&cf.Format, envVarFormats...)
-	proxyGcloud.Alias("gcp")
-
-	proxyKube := newProxyKubeCommand(proxy)
-
 	// Databases.
-	db := app.Command("db", "View and control proxied databases.")
-	db.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
-	dbList := db.Command("ls", "List all available databases.")
-	dbList.Flag("verbose", "Show extra database fields.").Short('v').BoolVar(&cf.Verbose)
-	dbList.Flag("search", searchHelp).StringVar(&cf.SearchKeywords)
-	dbList.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	dbList.Flag("format", defaults.FormatFlagDescription(defaults.DefaultFormats...)).Short('f').Default(teleport.Text).EnumVar(&cf.Format, defaults.DefaultFormats...)
-	dbList.Flag("all", "List databases from all clusters and proxies.").Short('R').BoolVar(&cf.ListAll)
-	dbList.Arg("labels", labelHelp).StringVar(&cf.Labels)
-	dbList.Alias(dbListHelp)
-	dbLogin := db.Command("login", "Retrieve credentials for a database.")
-	// don't require <db> positional argument, user can select with --labels/--query alone.
-	dbLogin.Arg("db", "Database to retrieve credentials for. Can be obtained from 'tsh db ls' output.").StringVar(&cf.DatabaseService)
-	dbLogin.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	dbLogin.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	dbLogin.Flag("db-user", "Database user to configure as default.").Short('u').StringVar(&cf.DatabaseUser)
-	dbLogin.Flag("db-name", "Database name to configure as default.").Short('n').StringVar(&cf.DatabaseName)
-	dbLogin.Flag("db-roles", "List of comma separate database roles to use for auto-provisioned user.").Short('r').StringVar(&cf.DatabaseRoles)
-	dbLogin.Flag("request-reason", "Reason for requesting access").StringVar(&cf.RequestReason)
-	dbLogin.Flag("disable-access-request", "Disable automatic resource access requests").BoolVar(&cf.disableAccessRequest)
-	dbLogout := db.Command("logout", "Remove database credentials.")
-	dbLogout.Arg("db", "Database to remove credentials for.").StringVar(&cf.DatabaseService)
-	dbLogout.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	dbLogout.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	dbEnv := db.Command("env", "Print environment variables for the configured database.")
-	dbEnv.Arg("db", "Print environment for the specified database").StringVar(&cf.DatabaseService)
-	dbEnv.Flag("format", defaults.FormatFlagDescription(defaults.DefaultFormats...)).Short('f').Default(teleport.Text).EnumVar(&cf.Format, defaults.DefaultFormats...)
-	dbEnv.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	dbEnv.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	// --db flag is deprecated in favor of positional argument for consistency with other commands.
-	dbEnv.Flag("db", "Print environment for the specified database.").Hidden().StringVar(&cf.DatabaseService)
-	dbConfig := db.Command("config", "Print database connection information. Useful when configuring GUI clients.")
-	dbConfig.Arg("db", "Print information for the specified database.").StringVar(&cf.DatabaseService)
-	dbConfig.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	dbConfig.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	// --db flag is deprecated in favor of positional argument for consistency with other commands.
-	dbConfig.Flag("db", "Print information for the specified database.").Hidden().StringVar(&cf.DatabaseService)
-	dbConfig.Flag("format", fmt.Sprintf("Print format: %q to print in table format (default), %q to print connect command, %q or %q to print in JSON or YAML.",
-		dbFormatText, dbFormatCommand, dbFormatJSON, dbFormatYAML)).Short('f').EnumVar(&cf.Format, dbFormatText, dbFormatCommand, dbFormatJSON, dbFormatYAML)
-	dbConnect := db.Command("connect", "Connect to a database.")
-	dbConnect.Arg("db", "Database service name to connect to.").StringVar(&cf.DatabaseService)
-	dbConnect.Flag("db-user", "Database user to log in as.").Short('u').StringVar(&cf.DatabaseUser)
-	dbConnect.Flag("db-name", "Database name to log in to.").Short('n').StringVar(&cf.DatabaseName)
-	dbConnect.Flag("db-roles", "List of comma separate database roles to use for auto-provisioned user.").Short('r').StringVar(&cf.DatabaseRoles)
-	dbConnect.Flag("labels", labelHelp).StringVar(&cf.Labels)
-	dbConnect.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	dbConnect.Flag("request-reason", "Reason for requesting access").StringVar(&cf.RequestReason)
-	dbConnect.Flag("disable-access-request", "Disable automatic resource access requests").BoolVar(&cf.disableAccessRequest)
 
 	// join
 	join := app.Command("join", "Join the active SSH or Kubernetes session.")
@@ -1150,8 +1055,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	reqSearch.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
 	reqSearch.Flag("labels", labelHelp).StringVar(&cf.Labels)
 	reqSearch.Flag("kube-cluster", "Kubernetes Cluster to search for Pods").StringVar(&cf.KubernetesCluster)
-	reqSearch.Flag("kube-namespace", "Kubernetes Namespace to search for Pods").Default(corev1.NamespaceDefault).StringVar(&cf.kubeNamespace)
-	reqSearch.Flag("all-kube-namespaces", "Search Pods in every namespace").BoolVar(&cf.kubeAllNamespaces)
 	reqSearch.Flag("verbose", "Verbose table output, shows full label output").Short('v').BoolVar(&cf.Verbose)
 
 	// Headless login approval
@@ -1162,25 +1065,12 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 
 	reqDrop := req.Command("drop", "Drop one more access requests from current identity.")
 	reqDrop.Arg("request-id", "IDs of requests to drop (default drops all requests)").Default("*").StringsVar(&cf.RequestIDs)
-	kubectl := app.Command("kubectl", "Runs a kubectl command on a Kubernetes cluster.").Interspersed(false)
-	// This hack is required in order to accept any args for tsh kubectl.
-	kubectl.Arg("", "").StringsVar(new([]string))
-	// Kubernetes subcommands.
-	kube := newKubeCommand(app)
 	// MFA subcommands.
 	mfa := newMFACommand(app)
 
 	config := app.Command("config", "Print OpenSSH configuration details.")
 	config.Flag("port", "SSH port on a remote host").Short('p').Int32Var(&cf.NodePort)
 
-	puttyConfig := app.Command("puttyconfig", "Add PuTTY saved session configuration for specified hostname to Windows registry")
-	puttyConfig.Arg("[user@]host", "Remote hostname and optional login to use").Required().StringVar(&cf.UserHost)
-	puttyConfig.Flag("port", "SSH port on a remote host").Short('p').Int32Var(&cf.NodePort)
-	puttyConfig.Flag("leaf", "Add a configuration for connecting to a leaf cluster").StringVar(&cf.LeafClusterName)
-	// only expose `tsh puttyconfig` subcommand on windows
-	if runtime.GOOS != constants.WindowsOS {
-		puttyConfig.Hidden()
-	}
 
 	// FIDO2, TouchID and WebAuthnWin commands.
 	f2 := fido2.NewCommand(app)
@@ -1455,46 +1345,12 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		err = onAppLogout(&cf)
 	case appConfig.FullCommand():
 		err = onAppConfig(&cf)
-	case kube.credentials.FullCommand():
-		err = kube.credentials.run(&cf)
-	case kube.ls.FullCommand():
-		err = kube.ls.run(&cf)
-	case kube.login.FullCommand():
-		err = kube.login.run(&cf)
-	case kube.sessions.FullCommand():
-		err = kube.sessions.run(&cf)
-	case kube.exec.FullCommand():
-		err = kube.exec.run(&cf)
-	case kube.join.FullCommand():
-		err = kube.join.run(&cf)
 
 	case proxySSH.FullCommand():
 		err = onProxyCommandSSH(&cf)
-	case proxyDB.FullCommand():
-		err = onProxyCommandDB(&cf)
 	case proxyApp.FullCommand():
 		err = onProxyCommandApp(&cf)
-	case proxyAWS.FullCommand():
-		err = onProxyCommandAWS(&cf)
-	case proxyAzure.FullCommand():
-		err = onProxyCommandAzure(&cf)
-	case proxyGcloud.FullCommand():
-		err = onProxyCommandGCloud(&cf)
-	case proxyKube.FullCommand():
-		err = proxyKube.run(&cf)
 
-	case dbList.FullCommand():
-		err = onListDatabases(&cf)
-	case dbLogin.FullCommand():
-		err = onDatabaseLogin(&cf)
-	case dbLogout.FullCommand():
-		err = onDatabaseLogout(&cf)
-	case dbEnv.FullCommand():
-		err = onDatabaseEnv(&cf)
-	case dbConfig.FullCommand():
-		err = onDatabaseConfig(&cf)
-	case dbConnect.FullCommand():
-		err = onDatabaseConnect(&cf)
 	case environment.FullCommand():
 		err = onEnvironment(&cf)
 	case mfa.ls.FullCommand():
@@ -1517,8 +1373,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		err = onRequestDrop(&cf)
 	case config.FullCommand():
 		err = onConfig(&cf)
-	case puttyConfig.FullCommand():
-		err = onPuttyConfig(&cf)
 	case aws.FullCommand():
 		err = onAWS(&cf)
 	case azure.FullCommand():
@@ -1551,9 +1405,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		err = deviceCmd.activateCredential.run(&cf)
 	case deviceCmd.dmiRead.FullCommand():
 		err = deviceCmd.dmiRead.run(&cf)
-	case kubectl.FullCommand():
-		idx := slices.Index(args, kubectl.FullCommand())
-		err = onKubectlCommand(&cf, args, args[idx:])
 	case headlessApprove.FullCommand():
 		err = onHeadlessApprove(&cf)
 	case workloadIdentityCmd.issue.FullCommand():
@@ -1831,10 +1682,6 @@ func onLogin(cf *CLIConf) error {
 			if err != nil {
 				return trace.Wrap(err)
 			}
-			if err := updateKubeConfigOnLogin(cf, tc); err != nil {
-				return trace.Wrap(err)
-			}
-
 			return trace.Wrap(printLoginInformation(cf, profile, profiles, cf.getAccessListsToReview(tc)))
 
 		// if the proxy names match but nothing else is specified; show motd and update active profile and kube configs
@@ -1851,15 +1698,6 @@ func onLogin(cf *CLIConf) error {
 
 			// Try updating kube config. If it fails, then we may have
 			// switched to an inactive profile. Continue to normal login.
-			if err := updateKubeConfigOnLogin(cf, tc); err == nil {
-				profile, profiles, err = cf.FullProfileStatus()
-				if err != nil {
-					return trace.Wrap(err)
-				}
-
-				// Print status to show information of the logged in user.
-				return trace.Wrap(printLoginInformation(cf, profile, profiles, cf.getAccessListsToReview(tc)))
-			}
 
 		// proxy is unspecified or the same as the currently provided proxy,
 		// but cluster is specified, treat this as selecting a new cluster
@@ -1880,9 +1718,6 @@ func onLogin(cf *CLIConf) error {
 			if err := tc.SaveProfile(true); err != nil {
 				return trace.Wrap(err)
 			}
-			if err := updateKubeConfigOnLogin(cf, tc); err != nil {
-				return trace.Wrap(err)
-			}
 
 			profile, profiles, err = cf.FullProfileStatus()
 			if err != nil {
@@ -1900,9 +1735,6 @@ func onLogin(cf *CLIConf) error {
 				return trace.Wrap(err)
 			}
 			if err := executeAccessRequest(cf, tc); err != nil {
-				return trace.Wrap(err)
-			}
-			if err := updateKubeConfigOnLogin(cf, tc); err != nil {
 				return trace.Wrap(err)
 			}
 			// Print status to show information of the logged in user.
@@ -2000,12 +1832,6 @@ func onLogin(cf *CLIConf) error {
 		return trace.Wrap(err)
 	}
 
-	// If the proxy is advertising that it supports Kubernetes, update kubeconfig.
-	if tc.KubeProxyAddr != "" {
-		if err := updateKubeConfigOnLogin(cf, tc); err != nil {
-			return trace.Wrap(err)
-		}
-	}
 
 	// Regular login without -i flag.
 	if err := tc.SaveProfile(true); err != nil {
@@ -4876,9 +4702,6 @@ func reissueWithRequests(cf *CLIConf, tc *client.TeleportClient, newRequests []s
 	if err := tc.SaveProfile(true); err != nil {
 		return trace.Wrap(err)
 	}
-	if err := updateKubeConfigOnLogin(cf, tc); err != nil {
-		return trace.Wrap(err)
-	}
 	return nil
 }
 
@@ -5246,25 +5069,6 @@ func forEachProfileParallel(cf *CLIConf, fn func(ctx context.Context, tc *client
 	}
 
 	return trace.Wrap(group.Wait())
-}
-
-// updateKubeConfigOnLogin checks if the `--kube-cluster` flag was provided to
-// tsh login call and updates the default kubeconfig with its value,
-// otherwise does nothing.
-func updateKubeConfigOnLogin(cf *CLIConf, tc *client.TeleportClient) error {
-	if len(cf.KubernetesCluster) == 0 {
-		return nil
-	}
-	kubeStatus, err := fetchKubeStatus(cf.Context, tc)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	// update the default kubeconfig
-	kubeConfigPath := ""
-	// do not override the context name
-	overrideContextName := ""
-	err = updateKubeConfig(cf, tc, kubeConfigPath, overrideContextName, kubeStatus)
-	return trace.Wrap(err)
 }
 
 // onHeadlessApprove executes 'tsh headless approve' command

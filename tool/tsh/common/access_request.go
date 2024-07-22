@@ -37,7 +37,6 @@ import (
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/asciitable"
 	"github.com/gravitational/teleport/lib/auth/authclient"
-	"github.com/gravitational/teleport/lib/kube/kubeconfig"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/tool/common"
@@ -407,18 +406,6 @@ func onRequestSearch(cf *CLIConf) error {
 		return trace.Wrap(err)
 	}
 
-	// If KubeCluster not provided try to read it from kubeconfig.
-	if cf.KubernetesCluster == "" {
-		cf.KubernetesCluster, _ = kubeconfig.SelectedKubeCluster(getKubeConfigPath(cf, ""), tc.SiteName)
-	}
-	if slices.Contains(types.KubernetesResourcesKinds, cf.ResourceKind) && cf.KubernetesCluster == "" {
-		return trace.BadParameter("when searching for Pods, --kube-cluster cannot be empty")
-	}
-	// if --all-namespaces flag was provided we search in every namespace.
-	// This means sending an empty namespace to the ListResources API.
-	if cf.kubeAllNamespaces {
-		cf.kubeNamespace = ""
-	}
 
 	var resources types.ResourcesWithLabels
 	var tableColumns []string
@@ -435,7 +422,6 @@ func onRequestSearch(cf *CLIConf) error {
 			SearchKeywords:      tc.SearchKeywords,
 			UseSearchAsRoles:    true,
 			KubernetesCluster:   cf.KubernetesCluster,
-			KubernetesNamespace: cf.kubeNamespace,
 			TeleportCluster:     tc.SiteName,
 		}
 

@@ -1,9 +1,0 @@
-node_modules
-scripts
-**/node_modules/
-**/dist/
-.gitignore
-Dockerfile
-Makefile
-*/**/.git
-*/**/*.log

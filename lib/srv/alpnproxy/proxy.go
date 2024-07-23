@@ -22,7 +22,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"errors"
 	"io"
 	"net"
@@ -41,7 +40,6 @@ import (
 	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/srv/alpnproxy/common"
-	"github.com/gravitational/teleport/lib/srv/db/dbutils"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 )
@@ -109,39 +107,6 @@ func MatchByProtocol(protocols ...common.Protocol) MatchFunc {
 func MatchByALPNPrefix(prefix string) MatchFunc {
 	return func(sni, alpn string) bool {
 		return strings.HasPrefix(alpn, prefix)
-	}
-}
-
-// ExtractMySQLEngineVersion returns a pre-process function for MySQL connections that tries to extract MySQL server version
-// from incoming connection.
-func ExtractMySQLEngineVersion(fn func(ctx context.Context, conn net.Conn) error) HandlerFuncWithInfo {
-	return func(ctx context.Context, conn net.Conn, info ConnectionInfo) error {
-		const mysqlVerStart = len(common.ProtocolMySQLWithVerPrefix)
-
-		for _, alpn := range info.ALPN {
-			if strings.HasSuffix(alpn, string(common.ProtocolPingSuffix)) ||
-				!strings.HasPrefix(alpn, string(common.ProtocolMySQLWithVerPrefix)) ||
-				len(alpn) == mysqlVerStart {
-				continue
-			}
-			// The version should never be longer than 255 characters including
-			// the prefix, but better to be safe.
-			versionEnd := 255
-			if len(alpn) < versionEnd {
-				versionEnd = len(alpn)
-			}
-
-			mysqlVersionBase64 := alpn[mysqlVerStart:versionEnd]
-			mysqlVersionBytes, err := base64.StdEncoding.DecodeString(mysqlVersionBase64)
-			if err != nil {
-				continue
-			}
-
-			ctx = context.WithValue(ctx, dbutils.ContextMySQLServerVersion, string(mysqlVersionBytes))
-			break
-		}
-
-		return fn(ctx, conn)
 	}
 }
 
@@ -411,13 +376,6 @@ func (p *Proxy) handleConn(ctx context.Context, clientConn net.Conn, defaultOver
 		handlerConn = p.handlePingConnection(ctx, tlsConn)
 	}
 
-	isDatabaseConnection, err := dbutils.IsDatabaseConnection(tlsConn.ConnectionState())
-	if err != nil {
-		p.log.WithError(err).Debug("Failed to check if connection is database connection.")
-	}
-	if isDatabaseConnection {
-		return trace.Wrap(p.handleDatabaseConnection(ctx, handlerConn, connInfo))
-	}
 	return trace.Wrap(handlerDesc.handle(ctx, handlerConn, connInfo))
 }
 
@@ -523,48 +481,6 @@ func (p *Proxy) readHelloMessageWithoutTLSTermination(ctx context.Context, conn 
 	return hello, newBufferedConn(conn, buff), nil
 }
 
-func (p *Proxy) handleDatabaseConnection(ctx context.Context, conn net.Conn, connInfo ConnectionInfo) error {
-	if p.cfg.Router.databaseTLSHandler == nil {
-		return trace.BadParameter("database handle not enabled")
-	}
-	return p.cfg.Router.databaseTLSHandler.handle(ctx, conn, connInfo)
-}
-
-func (p *Proxy) databaseHandlerWithTLSTermination(ctx context.Context, conn net.Conn, info ConnectionInfo) error {
-	// DB Protocols like Mongo have native support for TLS thus TLS connection needs to be terminated twice.
-	// First time for custom local proxy connection and the second time from Mongo protocol where TLS connection is used.
-	//
-	// Terminate the CLI TLS connection established by a database client that supports native TLS protocol like mongo.
-	// Mongo client establishes a connection to SNI ALPN Local Proxy with server name 127.0.0.1 where LocalProxy wraps
-	// the connection in TLS and forward to Teleport SNI ALPN Proxy where first TLS layer is terminated
-	// by Proxy.handleConn using ProxyConfig.WebTLSConfig.
-	tlsConn := tls.Server(conn, p.cfg.IdentityTLSConfig)
-	if err := tlsConn.SetReadDeadline(p.cfg.Clock.Now().Add(p.cfg.ReadDeadline)); err != nil {
-		if err := tlsConn.Close(); err != nil {
-			p.log.WithError(err).Error("Failed to close TLS connection.")
-		}
-		return trace.Wrap(err)
-	}
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return trace.Wrap(err)
-	}
-	if err := tlsConn.SetReadDeadline(time.Time{}); err != nil {
-		if err := tlsConn.Close(); err != nil {
-			p.log.WithError(err).Error("Failed to close TLS connection.")
-		}
-		return trace.Wrap(err)
-	}
-
-	isDatabaseConnection, err := dbutils.IsDatabaseConnection(tlsConn.ConnectionState())
-	if err != nil {
-		p.log.WithError(err).Debug("Failed to check if connection is database connection.")
-	}
-	if !isDatabaseConnection {
-		return trace.BadParameter("not database connection")
-	}
-	return trace.Wrap(p.handleDatabaseConnection(ctx, tlsConn, info))
-}
-
 func (p *Proxy) getHandlerDescBaseOnClientHelloMsg(clientHelloInfo *tls.ClientHelloInfo) (*HandlerDecs, error) {
 	if shouldRouteToKubeService(clientHelloInfo.ServerName) {
 		if p.cfg.Router.kubeHandler == nil {
@@ -586,13 +502,6 @@ func (p *Proxy) getHandleDescBasedOnALPNVal(clientHelloInfo *tls.ClientHelloInfo
 
 	for _, v := range clientProtocols {
 		protocol := common.Protocol(v)
-		if common.IsDBTLSProtocol(protocol) {
-			return &HandlerDecs{
-				MatchFunc:           MatchByProtocol(protocol),
-				HandlerWithConnInfo: p.databaseHandlerWithTLSTermination,
-				ForwardTLS:          false,
-			}, nil
-		}
 
 		for _, h := range p.cfg.Router.alpnHandlers {
 			if ok := h.MatchFunc(clientHelloInfo.ServerName, string(protocol)); ok {

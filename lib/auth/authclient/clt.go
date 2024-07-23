@@ -1415,7 +1415,6 @@ type ClientI interface {
 	services.DynamicAccessOracle
 	services.Restrictions
 	services.Apps
-	services.Databases
 	services.DatabaseServices
 	services.WindowsDesktops
 	services.SAMLIdPServiceProviders

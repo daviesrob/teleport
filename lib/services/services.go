@@ -35,7 +35,6 @@ type Services interface {
 	Presence
 	Restrictions
 	Apps
-	Databases
 	DatabaseServices
 	Kubernetes
 	AppSession

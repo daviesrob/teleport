@@ -72,7 +72,6 @@ import (
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	"github.com/gravitational/teleport/lib/benchmark"
-	benchmarkdb "github.com/gravitational/teleport/lib/benchmark/db"
 	"github.com/gravitational/teleport/lib/client"
 	dbprofile "github.com/gravitational/teleport/lib/client/db"
 	"github.com/gravitational/teleport/lib/client/identityfile"
@@ -1217,26 +1216,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 				Command:  cf.RemoteCommand,
 				Max:      cf.BenchMaxSessions,
 				Duration: cf.BenchDuration,
-			},
-		)
-	case benchPostgres.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmarkdb.PostgresBenchmark{
-				DBService:          cf.DatabaseService,
-				DBUser:             cf.DatabaseUser,
-				DBName:             cf.DatabaseName,
-				InsecureSkipVerify: cf.InsecureSkipVerify,
-			},
-		)
-	case benchMySQL.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmarkdb.MySQLBenchmark{
-				DBService:          cf.DatabaseService,
-				DBUser:             cf.DatabaseUser,
-				DBName:             cf.DatabaseName,
-				InsecureSkipVerify: cf.InsecureSkipVerify,
 			},
 		)
 	case join.FullCommand():

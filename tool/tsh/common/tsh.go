@@ -1199,24 +1199,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 				Random:  cf.BenchRandom,
 			},
 		)
-	case benchWebSSH.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmark.WebSSHBenchmark{
-				Command:  cf.RemoteCommand,
-				Random:   cf.BenchRandom,
-				Duration: cf.BenchDuration,
-			},
-		)
-	case benchWebSessions.FullCommand():
-		err = onBenchmark(
-			&cf,
-			&benchmark.WebSessionBenchmark{
-				Command:  cf.RemoteCommand,
-				Max:      cf.BenchMaxSessions,
-				Duration: cf.BenchDuration,
-			},
-		)
 	case join.FullCommand():
 		err = onJoin(&cf)
 	case scp.FullCommand():

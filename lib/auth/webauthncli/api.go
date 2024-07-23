@@ -29,9 +29,7 @@ import (
 
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/observability/tracing"
-	"github.com/gravitational/teleport/lib/auth/touchid"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
-	wanwin "github.com/gravitational/teleport/lib/auth/webauthnwin"
 )
 
 // ErrUsingNonRegisteredDevice is returned from Login when the user attempts to
@@ -144,34 +142,16 @@ func Login(
 	}
 
 	var attachment AuthenticatorAttachment
-	var user string
 	if opts != nil {
 		attachment = opts.AuthenticatorAttachment
-		user = opts.User
-	}
-
-	if wanwin.IsAvailable() {
-		log.Debug("WebAuthnWin: Using windows webauthn for credential assertion")
-		return wanwin.Login(ctx, origin, assertion, &wanwin.LoginOpts{
-			AuthenticatorAttachment: wanwin.AuthenticatorAttachment(attachment),
-		})
 	}
 
 	switch attachment {
 	case AttachmentCrossPlatform:
 		log.Debug("Cross-platform login")
 		return crossPlatformLogin(ctx, origin, assertion, prompt, opts)
-	case AttachmentPlatform:
-		log.Debug("Platform login")
-		return platformLogin(origin, user, assertion, prompt)
 	default:
-		log.Debug("Attempting platform login")
-		resp, credentialUser, err := platformLogin(origin, user, assertion, prompt)
-		if !errors.Is(err, &touchid.ErrAttemptFailed{}) {
-			return resp, credentialUser, trace.Wrap(err)
-		}
-
-		log.WithError(err).Debug("Platform login failed, falling back to cross-platform")
+		log.Debug("Cross-platform login (default)")
 		return crossPlatformLogin(ctx, origin, assertion, prompt, opts)
 	}
 }
@@ -183,18 +163,6 @@ func crossPlatformLogin(
 	log.Debug("FIDO2: Using libfido2 for assertion")
 	resp, user, err := FIDO2Login(ctx, origin, assertion, prompt, opts)
 	return resp, user, trace.Wrap(err)
-}
-
-func platformLogin(origin, user string, assertion *wantypes.CredentialAssertion, prompt LoginPrompt) (*proto.MFAAuthenticateResponse, string, error) {
-	resp, credentialUser, err := touchid.AttemptLogin(origin, user, assertion, ToTouchIDCredentialPicker(prompt))
-	if err != nil {
-		return nil, "", err
-	}
-	return &proto.MFAAuthenticateResponse{
-		Response: &proto.MFAAuthenticateResponse_Webauthn{
-			Webauthn: wantypes.CredentialAssertionResponseToProto(resp),
-		},
-	}, credentialUser, nil
 }
 
 // RegisterPrompt is the user interface for FIDO2Register.
@@ -222,11 +190,6 @@ type RegisterPrompt interface {
 func Register(
 	ctx context.Context,
 	origin string, cc *wantypes.CredentialCreation, prompt RegisterPrompt) (*proto.MFARegisterResponse, error) {
-	if wanwin.IsAvailable() {
-		log.Debug("WebAuthnWin: Using windows webauthn for credential creation")
-		return wanwin.Register(ctx, origin, cc)
-	}
-
 	log.Debug("FIDO2: Using libfido2 for credential creation")
 	resp, err := FIDO2Register(ctx, origin, cc, prompt)
 	return resp, trace.Wrap(err)
@@ -235,11 +198,11 @@ func Register(
 // HasPlatformSupport returns true if the platform supports client-side
 // WebAuthn-compatible logins.
 func HasPlatformSupport() bool {
-	return IsFIDO2Available() || touchid.IsAvailable()
+	return IsFIDO2Available()
 }
 
 // IsFIDO2Available returns true if FIDO2 is implemented either via native
-// libfido2 library or Windows WebAuthn API.
+// libfido2 library.
 func IsFIDO2Available() bool {
-	return isLibfido2Enabled() || wanwin.IsAvailable()
+	return isLibfido2Enabled()
 }

@@ -21,13 +21,11 @@ package common
 import (
 	"context"
 	"encoding/base32"
-	"errors"
 	"fmt"
 	"image/png"
 	"os"
 	"os/exec"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -40,10 +38,8 @@ import (
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/utils/prompt"
 	"github.com/gravitational/teleport/lib/asciitable"
-	"github.com/gravitational/teleport/lib/auth/touchid"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
-	wanwin "github.com/gravitational/teleport/lib/auth/webauthnwin"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/utils"
@@ -58,7 +54,6 @@ import (
 const (
 	totpDeviceType     = "TOTP"
 	webauthnDeviceType = "WEBAUTHN"
-	touchIDDeviceType  = "TOUCHID"
 )
 
 var (
@@ -70,9 +65,6 @@ var (
 )
 
 func initWebDevs() []string {
-	if touchid.IsAvailable() {
-		return []string{webauthnDeviceType, touchIDDeviceType}
-	}
 	return []string{webauthnDeviceType}
 }
 
@@ -201,8 +193,6 @@ type mfaAddCommand struct {
 	// allowPasswordless is initially true if --allow-passwordless is set, false
 	// if not explicitly requested.
 	// It can only be set by users if wancli.IsFIDO2Available() is true.
-	// Note that Touch ID registrations are always passwordless-capable,
-	// regardless of other settings.
 	allowPasswordless bool
 }
 
@@ -225,14 +215,6 @@ func (c *mfaAddCommand) run(cf *CLIConf) error {
 		return trace.Wrap(err)
 	}
 	ctx := cf.Context
-
-	// Attempt to diagnose clamshell failures.
-	if !slices.Contains(defaultDeviceTypes, touchIDDeviceType) {
-		diag, err := touchid.Diag()
-		if err == nil && diag.IsClamshellFailure() {
-			log.Warn("Touch ID support disabled, is your MacBook lid closed?")
-		}
-	}
 
 	if c.devType == "" {
 		// If we are prompting the user for the device type, then take a glimpse at
@@ -275,9 +257,6 @@ func (c *mfaAddCommand) run(cf *CLIConf) error {
 			}
 			c.allowPasswordless = answer == "YES"
 		}
-	case touchIDDeviceType:
-		// Touch ID is always a resident key/passwordless
-		c.allowPasswordless = true
 	}
 	log.Debugf("tsh using passwordless registration? %v", c.allowPasswordless)
 
@@ -305,7 +284,6 @@ func (c *mfaAddCommand) addDeviceRPC(ctx context.Context, tc *client.TeleportCli
 	devTypePB := map[string]proto.DeviceType{
 		totpDeviceType:     proto.DeviceType_DEVICE_TYPE_TOTP,
 		webauthnDeviceType: proto.DeviceType_DEVICE_TYPE_WEBAUTHN,
-		touchIDDeviceType:  proto.DeviceType_DEVICE_TYPE_WEBAUTHN,
 	}[c.devType]
 	// Sanity check.
 	if devTypePB == proto.DeviceType_DEVICE_TYPE_UNSPECIFIED {
@@ -344,15 +322,6 @@ func (c *mfaAddCommand) addDeviceRPC(ctx context.Context, tc *client.TeleportCli
 			return trace.Wrap(err)
 		}
 
-		// Tweak Windows platform messages so it's clear we whether we are prompting
-		// for the *registered* or *new* device.
-		// We do it here, preemptively, because it's the simpler solution (instead
-		// of finding out whether it is a Windows prompt or not).
-		const registeredMsg = "Using platform authentication for *registered* device, follow the OS dialogs"
-		const newMsg = "Using platform authentication for *new* device, follow the OS dialogs"
-		defer wanwin.ResetPromptPlatformMessage()
-		wanwin.PromptPlatformMessage = registeredMsg
-
 		// Prompt for authentication.
 		// Does nothing if no challenges were issued (aka user has no devices).
 		authnResp, err := tc.NewMFAPrompt(mfa.WithPromptDeviceType(mfa.DeviceDescriptorRegistered)).Run(ctx, authChallenge)
@@ -371,7 +340,6 @@ func (c *mfaAddCommand) addDeviceRPC(ctx context.Context, tc *client.TeleportCli
 		}
 
 		// Prompt for registration.
-		wanwin.PromptPlatformMessage = newMsg
 		registerResp, registerCallback, err := promptRegisterChallenge(ctx, tc.WebProxyAddr, c.devType, registerChallenge)
 		if err != nil {
 			return trace.Wrap(err)
@@ -426,10 +394,6 @@ func promptRegisterChallenge(ctx context.Context, proxyAddr, devType string, c *
 			origin = "https://" + origin
 		}
 		cc := wantypes.CredentialCreationFromProto(c.GetWebauthn())
-
-		if devType == touchIDDeviceType {
-			return promptTouchIDRegisterChallenge(origin, cc)
-		}
 
 		resp, err := promptWebauthnRegisterChallenge(ctx, origin, cc)
 		return resp, noopRegisterCallback{}, err
@@ -532,20 +496,6 @@ func promptWebauthnRegisterChallenge(ctx context.Context, origin string, cc *wan
 	return resp, trace.Wrap(err)
 }
 
-func promptTouchIDRegisterChallenge(origin string, cc *wantypes.CredentialCreation) (*proto.MFARegisterResponse, registerCallback, error) {
-	log.Debugf("Touch ID: prompting registration with origin %q", origin)
-
-	reg, err := touchid.Register(origin, cc)
-	if err != nil {
-		return nil, nil, trace.Wrap(err)
-	}
-	return &proto.MFARegisterResponse{
-		Response: &proto.MFARegisterResponse_Webauthn{
-			Webauthn: wantypes.CredentialCreationResponseToProto(reg.CCR),
-		},
-	}, reg, nil
-}
-
 type mfaRemoveCommand struct {
 	*kingpin.CmdClause
 	name string
@@ -579,8 +529,7 @@ func (c *mfaRemoveCommand) run(cf *CLIConf) error {
 		defer rootAuthClient.Close()
 
 		// Lookup device to delete.
-		// This lets us exit early if the device doesn't exist and enables the
-		// Touch ID cleanup at the end.
+		// This lets us exit early if the device doesn't exist
 		devicesResp, err := rootAuthClient.GetMFADevices(ctx, &proto.GetMFADevicesRequest{})
 		if err != nil {
 			return trace.Wrap(err)
@@ -619,12 +568,6 @@ func (c *mfaRemoveCommand) run(cf *CLIConf) error {
 			ExistingMFAResponse: authnSolved,
 		}); err != nil {
 			return trace.Wrap(err)
-		}
-
-		// If deleted device was a webauthn device, then attempt to delete leftover
-		// Touch ID credentials.
-		if wanDevice := deviceToDelete.GetWebauthn(); wanDevice != nil {
-			deleteTouchIDCredentialIfApplicable(string(wanDevice.CredentialId))
 		}
 
 		return nil
@@ -693,11 +636,3 @@ func showOTPQRCode(k *otp.Key) (cleanup func(), retErr error) {
 	}, nil
 }
 
-func deleteTouchIDCredentialIfApplicable(credentialID string) {
-	switch err := touchid.AttemptDeleteNonInteractive(credentialID); {
-	case errors.Is(err, &touchid.ErrAttemptFailed{}):
-		// Nothing to do here, just proceed.
-	case err != nil:
-		log.WithError(err).Errorf("Failed to delete credential: %s\n", credentialID)
-	}
-}

@@ -71,7 +71,6 @@ import (
 	"github.com/gravitational/teleport/api/utils/prompt"
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/auth/native"
-	"github.com/gravitational/teleport/lib/auth/touchid"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	"github.com/gravitational/teleport/lib/authz"
 	libmfa "github.com/gravitational/teleport/lib/client/mfa"
@@ -3629,32 +3628,10 @@ func (tc *TeleportClient) mfaLocalLoginWeb(ctx context.Context, priv *keys.Priva
 	return clt, session, trace.Wrap(err)
 }
 
-// hasTouchIDCredentials provides indirection for tests.
-var hasTouchIDCredentials = touchid.HasCredentials
-
 // canDefaultToPasswordless checks without user interaction
 // if there is any registered passwordless login.
 func (tc *TeleportClient) canDefaultToPasswordless(pr *webclient.PingResponse) bool {
-	// Verify if client flags are compatible with passwordless.
-	allowedConnector := tc.AuthConnector == ""
-	allowedAttachment := tc.AuthenticatorAttachment == wancli.AttachmentAuto || tc.AuthenticatorAttachment == wancli.AttachmentPlatform
-	if !allowedConnector || !allowedAttachment || tc.PreferOTP {
-		return false
-	}
-
-	// Verify if server is compatible with passwordless.
-	if !pr.Auth.AllowPasswordless || pr.Auth.Webauthn == nil {
-		return false
-	}
-
-	// Only pass on the user if explicitly set, otherwise let the credential
-	// picker kick in.
-	user := ""
-	if tc.ExplicitUsername {
-		user = tc.Username
-	}
-
-	return hasTouchIDCredentials(pr.Auth.Webauthn.RPID, user)
+	return false
 }
 
 // SSHLoginFunc is a function which carries out authn with an auth server and returns an auth response.

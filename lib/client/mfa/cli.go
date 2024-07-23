@@ -30,7 +30,6 @@ import (
 	"github.com/gravitational/teleport/api/utils/prompt"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
-	"github.com/gravitational/teleport/lib/auth/webauthnwin"
 )
 
 // CLIPrompt is the default CLI mfa prompt implementation.
@@ -140,11 +139,6 @@ func (c *CLIPrompt) getWebauthnPrompt(ctx context.Context, withTOTP bool) wancli
 
 	if withTOTP {
 		prompt.FirstTouchMessage = fmt.Sprintf("Tap any %ssecurity key or enter a code from a %sOTP device", c.promptDevicePrefix(), c.promptDevicePrefix())
-
-		// Customize Windows prompt directly.
-		// Note that the platform popup is a modal and will only go away if canceled.
-		webauthnwin.PromptPlatformMessage = "Follow the OS dialogs for platform authentication, or enter an OTP code here:"
-		defer webauthnwin.ResetPromptPlatformMessage()
 	}
 
 	return prompt

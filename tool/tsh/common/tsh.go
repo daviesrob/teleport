@@ -93,8 +93,6 @@ import (
 	"github.com/gravitational/teleport/lib/utils/mlock"
 	"github.com/gravitational/teleport/tool/common"
 	"github.com/gravitational/teleport/tool/common/fido2"
-	"github.com/gravitational/teleport/tool/common/touchid"
-	"github.com/gravitational/teleport/tool/common/webauthnwin"
 )
 
 var log = logrus.WithFields(logrus.Fields{
@@ -1030,10 +1028,8 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	config.Flag("port", "SSH port on a remote host").Short('p').Int32Var(&cf.NodePort)
 
 
-	// FIDO2, TouchID and WebAuthnWin commands.
+	// FIDO2 commands.
 	f2 := fido2.NewCommand(app)
-	tid := touchid.NewCommand(app)
-	wanwin := webauthnwin.NewCommand(app)
 
 	// Device Trust commands.
 	deviceCmd := newDeviceCommand(app)
@@ -1321,10 +1317,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		err = f2.Diag.Run(cf.Context)
 	case f2.Attobj.FullCommand():
 		err = f2.Attobj.Run()
-	case tid.Diag.FullCommand():
-		err = tid.Diag.Run()
-	case wanwin.Diag.FullCommand():
-		err = wanwin.Diag.Run(cf.Context)
 	case deviceCmd.enroll.FullCommand():
 		err = deviceCmd.enroll.run(&cf)
 	case deviceCmd.collect.FullCommand():
@@ -1348,16 +1340,7 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	case vnetDaemonCmd.FullCommand():
 		err = vnetDaemonCmd.run(&cf)
 	default:
-		// Handle commands that might not be available.
-		switch {
-		case tid.Ls.MatchesCommand(command):
-			err = tid.Ls.Run()
-		case tid.Rm.MatchesCommand(command):
-			err = tid.Rm.Run()
-		default:
-			// This should only happen when there's a missing switch case above.
-			err = trace.BadParameter("command %q not configured", command)
-		}
+		err = trace.BadParameter("command %q not configured", command)
 	}
 
 	if trace.IsNotImplemented(err) {

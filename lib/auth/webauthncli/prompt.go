@@ -29,7 +29,6 @@ import (
 	"github.com/gravitational/trace"
 
 	"github.com/gravitational/teleport/api/utils/prompt"
-	"github.com/gravitational/teleport/lib/auth/touchid"
 )
 
 // DefaultPrompt is a default implementation for LoginPrompt and
@@ -127,41 +126,4 @@ func (p *DefaultPrompt) PromptCredential(creds []*CredentialInfo) (*CredentialIn
 
 type credentialPicker interface {
 	PromptCredential([]*CredentialInfo) (*CredentialInfo, error)
-}
-
-// ToTouchIDCredentialPicker adapts a wancli credential picker, such as
-// LoginPrompt or DefaultPrompt, to a touchid.CredentialPicker
-func ToTouchIDCredentialPicker(p credentialPicker) touchid.CredentialPicker {
-	return tidPickerAdapter{impl: p}
-}
-
-type tidPickerAdapter struct {
-	impl credentialPicker
-}
-
-func (p tidPickerAdapter) PromptCredential(creds []*touchid.CredentialInfo) (*touchid.CredentialInfo, error) {
-	credMap := make(map[*CredentialInfo]*touchid.CredentialInfo)
-	wcreds := make([]*CredentialInfo, len(creds))
-	for i, c := range creds {
-		cred := &CredentialInfo{
-			ID: []byte(c.CredentialID),
-			User: UserInfo{
-				UserHandle: c.User.UserHandle,
-				Name:       c.User.Name,
-			},
-		}
-		credMap[cred] = c
-		wcreds[i] = cred
-	}
-
-	wchoice, err := p.impl.PromptCredential(wcreds)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	choice, ok := credMap[wchoice]
-	if !ok {
-		return nil, fmt.Errorf("prompt returned invalid credential: %#v", wchoice)
-	}
-	return choice, nil
 }

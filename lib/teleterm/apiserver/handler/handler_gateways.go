@@ -20,13 +20,10 @@ package handler
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/gravitational/trace"
 
 	api "github.com/gravitational/teleport/gen/proto/go/teleport/lib/teleterm/v1"
-	"github.com/gravitational/teleport/lib/teleterm/cmd"
 	"github.com/gravitational/teleport/lib/teleterm/daemon"
 	"github.com/gravitational/teleport/lib/teleterm/gateway"
 )
@@ -82,11 +79,6 @@ func (s *Handler) RemoveGateway(ctx context.Context, req *api.RemoveGatewayReque
 }
 
 func (s *Handler) newAPIGateway(ctx context.Context, gateway gateway.Gateway) (*api.Gateway, error) {
-	cmds, err := s.DaemonService.GetGatewayCLICommand(ctx, gateway)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	return &api.Gateway{
 		Uri:                   gateway.URI().String(),
 		TargetUri:             gateway.TargetURI().String(),
@@ -96,22 +88,7 @@ func (s *Handler) newAPIGateway(ctx context.Context, gateway gateway.Gateway) (*
 		Protocol:              gateway.Protocol(),
 		LocalAddress:          gateway.LocalAddress(),
 		LocalPort:             gateway.LocalPort(),
-		GatewayCliCommand:     makeGatewayCLICommand(cmds),
 	}, nil
-}
-
-func makeGatewayCLICommand(cmds cmd.Cmds) *api.GatewayCLICommand {
-	preview := strings.TrimSpace(
-		fmt.Sprintf("%s %s",
-			strings.Join(cmds.Preview.Env, " "),
-			strings.Join(cmds.Preview.Args, " ")))
-
-	return &api.GatewayCLICommand{
-		Path:    cmds.Exec.Path,
-		Args:    cmds.Exec.Args,
-		Env:     cmds.Exec.Env,
-		Preview: preview,
-	}
 }
 
 // SetGatewayTargetSubresourceName changes the TargetSubresourceName field of gateway.Gateway

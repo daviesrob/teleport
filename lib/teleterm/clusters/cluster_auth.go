@@ -35,7 +35,6 @@ import (
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	"github.com/gravitational/teleport/lib/client"
-	dbprofile "github.com/gravitational/teleport/lib/client/db"
 )
 
 // SyncAuthPreference fetches Teleport auth preferences and stores it in the cluster profile
@@ -65,14 +64,6 @@ func (c *Cluster) SyncAuthPreference(ctx context.Context) (*webclient.WebConfigA
 
 // Logout deletes all cluster certificates
 func (c *Cluster) Logout(ctx context.Context) error {
-	// Delete db certs
-	for _, db := range c.status.Databases {
-		err := dbprofile.Delete(c.clusterClient, db)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-	}
-
 	// Remove keys for this user from disk and running agent.
 	if err := c.clusterClient.Logout(); err != nil && !trace.IsNotFound(err) {
 		return trace.Wrap(err)

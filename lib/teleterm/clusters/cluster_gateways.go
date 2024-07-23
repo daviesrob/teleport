@@ -29,7 +29,6 @@ import (
 	libmfa "github.com/gravitational/teleport/lib/client/mfa"
 	"github.com/gravitational/teleport/lib/teleterm/api/uri"
 	"github.com/gravitational/teleport/lib/teleterm/gateway"
-	"github.com/gravitational/teleport/lib/tlsca"
 )
 
 type CreateGatewayParams struct {
@@ -54,10 +53,6 @@ func (c *Cluster) CreateGateway(ctx context.Context, params CreateGatewayParams)
 	c.clusterClient.MFAPromptConstructor = params.MFAPromptConstructor
 
 	switch {
-	case params.TargetURI.IsDB():
-		gateway, err := c.createDBGateway(ctx, params)
-		return gateway, trace.Wrap(err)
-
 	case params.TargetURI.IsApp():
 		gateway, err := c.createAppGateway(ctx, params)
 		return gateway, trace.Wrap(err)
@@ -66,52 +61,6 @@ func (c *Cluster) CreateGateway(ctx context.Context, params CreateGatewayParams)
 		return nil, trace.NotImplemented("gateway not supported for %v", params.TargetURI)
 	}
 }
-
-func (c *Cluster) createDBGateway(ctx context.Context, params CreateGatewayParams) (gateway.Gateway, error) {
-	db, err := c.GetDatabase(ctx, params.ClusterClient.AuthClient, params.TargetURI)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	routeToDatabase := tlsca.RouteToDatabase{
-		ServiceName: db.GetName(),
-		Protocol:    db.GetProtocol(),
-		Username:    params.TargetUser,
-	}
-
-	var cert tls.Certificate
-
-	if err := AddMetadataToRetryableError(ctx, func() error {
-		cert, err = c.reissueDBCerts(ctx, params.ClusterClient, routeToDatabase)
-		return trace.Wrap(err)
-	}); err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	gw, err := gateway.New(gateway.Config{
-		LocalPort:                     params.LocalPort,
-		TargetURI:                     params.TargetURI,
-		TargetUser:                    params.TargetUser,
-		TargetName:                    db.GetName(),
-		TargetSubresourceName:         params.TargetSubresourceName,
-		Protocol:                      db.GetProtocol(),
-		Cert:                          cert,
-		Insecure:                      c.clusterClient.InsecureSkipVerify,
-		WebProxyAddr:                  c.clusterClient.WebProxyAddr,
-		Log:                           c.Log,
-		TCPPortAllocator:              params.TCPPortAllocator,
-		OnExpiredCert:                 params.OnExpiredCert,
-		Clock:                         c.clock,
-		TLSRoutingConnUpgradeRequired: c.clusterClient.TLSRoutingConnUpgradeRequired,
-		RootClusterCACertPoolFunc:     c.clusterClient.RootClusterCACertPool,
-	})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	return gw, nil
-}
-
 
 func (c *Cluster) createAppGateway(ctx context.Context, params CreateGatewayParams) (gateway.Gateway, error) {
 	appName := params.TargetURI.GetAppName()
@@ -153,13 +102,6 @@ func (c *Cluster) createAppGateway(ctx context.Context, params CreateGatewayPara
 // ReissueGatewayCerts reissues certificate for the provided gateway.
 func (c *Cluster) ReissueGatewayCerts(ctx context.Context, clusterClient *client.ClusterClient, g gateway.Gateway) (tls.Certificate, error) {
 	switch {
-	case g.TargetURI().IsDB():
-		db, err := gateway.AsDatabase(g)
-		if err != nil {
-			return tls.Certificate{}, trace.Wrap(err)
-		}
-		cert, err := c.reissueDBCerts(ctx, clusterClient, db.RouteToDatabase())
-		return cert, trace.Wrap(err)
 	case g.TargetURI().IsApp():
 		appName := g.TargetURI().GetAppName()
 		app, err := c.getApp(ctx, clusterClient.AuthClient, appName)

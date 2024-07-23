@@ -70,14 +70,6 @@ func (s *Handler) ListUnifiedResources(ctx context.Context, req *api.ListUnified
 				RequiresRequest: resource.RequiresRequest,
 			})
 		}
-		if resource.Database != nil {
-			response.Resources = append(response.Resources, &api.PaginatedResource{
-				Resource: &api.PaginatedResource_Database{
-					Database: newAPIDatabase(*resource.Database),
-				},
-				RequiresRequest: resource.RequiresRequest,
-			})
-		}
 		if resource.App != nil {
 			response.Resources = append(response.Resources, &api.PaginatedResource{
 				Resource: &api.PaginatedResource_App{

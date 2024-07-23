@@ -21,7 +21,6 @@ package daemon
 import (
 	"context"
 	"crypto/tls"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -41,7 +40,6 @@ import (
 	dtauthn "github.com/gravitational/teleport/lib/devicetrust/authn"
 	"github.com/gravitational/teleport/lib/teleterm/api/uri"
 	"github.com/gravitational/teleport/lib/teleterm/clusters"
-	"github.com/gravitational/teleport/lib/teleterm/cmd"
 	"github.com/gravitational/teleport/lib/teleterm/gateway"
 	"github.com/gravitational/teleport/lib/teleterm/services/unifiedresources"
 	"github.com/gravitational/teleport/lib/teleterm/services/userpreferences"
@@ -476,33 +474,6 @@ func (s *Service) ListGateways() []gateway.Gateway {
 	}
 
 	return gws
-}
-
-// GetGatewayCLICommand creates the CLI command used for the provided gateway.
-func (s *Service) GetGatewayCLICommand(ctx context.Context, gateway gateway.Gateway) (cmd.Cmds, error) {
-	targetURI := gateway.TargetURI()
-	switch {
-	case targetURI.IsDB():
-		cluster, _, err := s.cfg.Storage.GetByResourceURI(targetURI)
-		if err != nil {
-			return cmd.Cmds{}, trace.Wrap(err)
-		}
-
-		clusterClient, err := s.GetCachedClient(ctx, cluster.URI)
-		if err != nil {
-			return cmd.Cmds{}, trace.Wrap(err)
-		}
-
-		cmds, err := cmd.NewDBCLICommand(ctx, cluster, gateway, clusterClient.AuthClient)
-		return cmds, trace.Wrap(err)
-
-	case targetURI.IsApp():
-		blankCmd := exec.Command("")
-		return cmd.Cmds{Exec: blankCmd, Preview: blankCmd}, nil
-
-	default:
-		return cmd.Cmds{}, trace.NotImplemented("gateway not supported for %v", targetURI)
-	}
 }
 
 // SetGatewayTargetSubresourceName updates the TargetSubresourceName field of a gateway stored in

@@ -70,15 +70,6 @@ func List(ctx context.Context, cluster *clusters.Cluster, client apiclient.ListU
 				},
 				RequiresRequest: requiresRequest,
 			})
-		case types.DatabaseServer:
-			db := r.GetDatabase()
-			response.Resources = append(response.Resources, UnifiedResource{
-				Database: &clusters.Database{
-					URI:      cluster.URI.AppendDB(db.GetName()),
-					Database: db,
-				},
-				RequiresRequest: requiresRequest,
-			})
 		case types.AppServer:
 			app := r.GetApp()
 
@@ -137,7 +128,6 @@ type ListResponse struct {
 // Only one filed should be set at a time.
 type UnifiedResource struct {
 	Server                 *clusters.Server
-	Database               *clusters.Database
 	App                    *clusters.App
 	SAMLIdPServiceProvider *clusters.SAMLIdPServiceProvider
 	RequiresRequest        bool

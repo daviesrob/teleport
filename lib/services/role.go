@@ -31,7 +31,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/google/uuid"
 	"github.com/gravitational/trace"
 	jsoniter "github.com/json-iterator/go"
@@ -50,7 +49,6 @@ import (
 	"github.com/gravitational/teleport/lib/services/readonly"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
-	awsutils "github.com/gravitational/teleport/lib/utils/aws"
 	"github.com/gravitational/teleport/lib/utils/parse"
 )
 
@@ -2158,22 +2156,6 @@ type databaseUserMatcher struct {
 // NewDatabaseUserMatcher creates a RoleMatcher that checks whether the role's
 // database users match the specified condition.
 func NewDatabaseUserMatcher(db types.Database, user string) RoleMatcher {
-	if db.SupportAWSIAMRoleARNAsUsers() {
-		return &databaseUserMatcher{
-			user:             user,
-			alternativeNames: makeUsernamesForAWSRoleARN(db, user),
-			caseInsensitive:  db.IsUsernameCaseInsensitive(),
-		}
-	}
-
-	if db.RequireAWSIAMRolesAsUsers() {
-		return &databaseUserMatcher{
-			user:             user,
-			alternativeNames: makeAlternativeNamesForAWSRole(db, user),
-			caseInsensitive:  db.IsUsernameCaseInsensitive(),
-		}
-	}
-
 	return &databaseUserMatcher{
 		user:            user,
 		caseInsensitive: db.IsUsernameCaseInsensitive(),
@@ -2199,56 +2181,6 @@ func (m *databaseUserMatcher) Match(role types.Role, condition types.RoleConditi
 // String returns the matcher's string representation.
 func (m *databaseUserMatcher) String() string {
 	return fmt.Sprintf("databaseUserMatcher(user=%v, alternativeNames=%v)", m.user, m.alternativeNames)
-}
-
-func makeAlternativeNamesForAWSRole(db types.Database, user string) []string {
-	metadata := db.GetAWS()
-	if metadata.Region == "" || metadata.AccountID == "" {
-		return nil
-	}
-
-	// If input database user is a role ARN, try the short role name.
-	// The input role ARN must have matching partition and account ID in
-	// order to try the short role name.
-	if arn.IsARN(user) {
-		roleName, err := awsutils.ValidateRoleARNAndExtractRoleName(user, metadata.Partition(), metadata.AccountID)
-		if err != nil {
-			return nil
-		}
-		return []string{roleName}
-	}
-
-	// If input database user is the short role name, try the full ARN.
-	roleARN, err := awsutils.BuildRoleARN(user, metadata.Region, metadata.AccountID)
-	if err != nil {
-		return nil
-	}
-	return []string{roleARN}
-}
-
-// makeUsernamesForAWSRoleARN builds ARN alternatives for database users who are full or
-// partial ARN.
-func makeUsernamesForAWSRoleARN(db types.Database, user string) []string {
-	if !awsutils.IsRoleARN(user) {
-		return nil
-	}
-
-	metadata := db.GetAWS()
-	if metadata.Region != "" && metadata.AccountID != "" && awsutils.IsPartialRoleARN(user) {
-		roleARN, err := awsutils.BuildRoleARN(user, metadata.Region, metadata.AccountID)
-		if err != nil {
-			return nil
-		}
-
-		return []string{roleARN}
-	}
-
-	roleARN, err := awsutils.ParseRoleARN(user)
-	if err != nil {
-		return nil
-	}
-
-	return []string{roleARN.Resource}
 }
 
 // DatabaseNameMatcher matches a role against database name.

@@ -33,7 +33,6 @@ import (
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/teleterm/api/uri"
 	"github.com/gravitational/teleport/lib/utils"
-	"github.com/gravitational/teleport/lib/utils/aws"
 )
 
 // App describes an app resource.
@@ -44,8 +43,6 @@ type App struct {
 	// It is included in this struct because the callsite which constructs FQDN must have access to
 	// clusters.Cluster.
 	FQDN string
-	// AWSRoles is a list of AWS IAM roles for the application representing AWS console.
-	AWSRoles aws.Roles
 
 	App types.Application
 }
@@ -98,7 +95,6 @@ func (c *Cluster) GetApps(ctx context.Context, authClient authclient.ClientI, r 
 			results = append(results, AppOrSAMLIdPServiceProvider{App: &App{
 				URI:      c.URI.AppendApp(app.GetName()),
 				FQDN:     c.AssembleAppFQDN(app),
-				AWSRoles: c.GetAWSRoles(app),
 				App:      app,
 			}})
 		} else {
@@ -150,9 +146,6 @@ func (c *Cluster) getApp(ctx context.Context, authClient authclient.ClientI, app
 
 // ReissueAppCert issue new certificates for the app and saves them to disk.
 func (c *Cluster) ReissueAppCert(ctx context.Context, clusterClient *client.ClusterClient, app types.Application) (tls.Certificate, error) {
-	if app.IsAWSConsole() || app.IsGCP() || app.IsAzureCloud() {
-		return tls.Certificate{}, trace.BadParameter("cloud applications are not supported")
-	}
 	// Refresh the certs to account for clusterClient.SiteName pointing at a leaf cluster.
 	err := clusterClient.ReissueUserCerts(ctx, client.CertCacheKeep, client.ReissueParams{
 		RouteToCluster: c.clusterClient.SiteName,
@@ -166,7 +159,6 @@ func (c *Cluster) ReissueAppCert(ctx context.Context, clusterClient *client.Clus
 		Name:              app.GetName(),
 		PublicAddr:        app.GetPublicAddr(),
 		ClusterName:       c.clusterClient.SiteName,
-		AWSRoleARN:        "",
 		AzureIdentity:     "",
 		GCPServiceAccount: "",
 	}
@@ -227,11 +219,3 @@ func (c *Cluster) AssembleAppFQDN(app types.Application) string {
 	return utils.AssembleAppFQDN(localClusterName, localProxyDNSName, appClusterName, app)
 }
 
-// GetAWSRoles returns a list of allowed AWS role ARNs user can assume,
-// associated with the app's AWS account ID.
-func (c *Cluster) GetAWSRoles(app types.Application) aws.Roles {
-	if app.IsAWSConsole() {
-		return aws.FilterAWSRoles(c.GetAWSRolesARNs(), app.GetAWSAccountID())
-	}
-	return aws.Roles{}
-}

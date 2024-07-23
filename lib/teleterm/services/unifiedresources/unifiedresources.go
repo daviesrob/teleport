@@ -77,7 +77,6 @@ func List(ctx context.Context, cluster *clusters.Cluster, client apiclient.ListU
 				App: &clusters.App{
 					URI:      cluster.URI.AppendApp(app.GetName()),
 					FQDN:     cluster.AssembleAppFQDN(app),
-					AWSRoles: cluster.GetAWSRoles(app),
 					App:      app,
 				},
 				RequiresRequest: requiresRequest,
@@ -90,7 +89,6 @@ func List(ctx context.Context, cluster *clusters.Cluster, client apiclient.ListU
 					App: &clusters.App{
 						URI:      cluster.URI.AppendApp(app.GetName()),
 						FQDN:     cluster.AssembleAppFQDN(app),
-						AWSRoles: cluster.GetAWSRoles(app),
 						App:      app,
 					},
 					RequiresRequest: requiresRequest,

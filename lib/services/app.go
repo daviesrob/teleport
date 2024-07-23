@@ -27,7 +27,6 @@ import (
 	"sync"
 
 	"github.com/gravitational/trace"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	kyaml "k8s.io/apimachinery/pkg/util/yaml"
 
@@ -158,55 +157,6 @@ func UnmarshalAppServer(data []byte, opts ...MarshalOption) (types.AppServer, er
 		return &s, nil
 	}
 	return nil, trace.BadParameter("unsupported app server resource version %q", h.Version)
-}
-
-// NewApplicationFromKubeService creates application resources from kubernetes service.
-// It transforms service fields and annotations into appropriate Teleport app fields.
-// Service labels are copied to app labels.
-func NewApplicationFromKubeService(service corev1.Service, clusterName, protocol string, port corev1.ServicePort) (types.Application, error) {
-	appURI := buildAppURI(protocol, GetServiceFQDN(service), port.Port)
-
-	rewriteConfig, err := getAppRewriteConfig(service.GetAnnotations())
-	if err != nil {
-		return nil, trace.Wrap(err, "could not get app rewrite config for the service")
-	}
-
-	appNameAnnotation := service.GetAnnotations()[types.DiscoveryAppNameLabel]
-	appName, err := getAppName(service.GetName(), service.GetNamespace(), clusterName, port.Name, appNameAnnotation)
-	if err != nil {
-		return nil, trace.Wrap(err, "could not create app name for the service")
-	}
-
-	labels, err := getAppLabels(service.GetLabels(), clusterName)
-	if err != nil {
-		return nil, trace.Wrap(err, "could not get labels for the service")
-	}
-
-	app, err := types.NewAppV3(types.Metadata{
-		Name:        appName,
-		Description: fmt.Sprintf("Discovered application in Kubernetes cluster %q", clusterName),
-		Labels:      labels,
-	}, types.AppSpecV3{
-		URI:                appURI,
-		Rewrite:            rewriteConfig,
-		InsecureSkipVerify: getTLSInsecureSkipVerify(service.GetAnnotations()),
-	})
-	if err != nil {
-		return nil, trace.Wrap(err, "could not create an app from Kubernetes service")
-	}
-
-	return app, nil
-}
-
-// GetServiceFQDN returns the fully qualified domain name for the service.
-func GetServiceFQDN(service corev1.Service) string {
-	// If service type is ExternalName it points to external DNS name, to keep correct
-	// HOST for HTTP requests we return already final external DNS name.
-	// https://kubernetes.io/docs/concepts/services-networking/service/#externalname
-	if service.Spec.Type == corev1.ServiceTypeExternalName {
-		return service.Spec.ExternalName
-	}
-	return fmt.Sprintf("%s.%s.svc.%s", service.GetName(), service.GetNamespace(), clusterDomainResolver())
 }
 
 func buildAppURI(protocol, serviceFQDN string, port int32) string {

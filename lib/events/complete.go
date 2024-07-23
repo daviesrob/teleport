@@ -35,7 +35,6 @@ import (
 	"github.com/gravitational/teleport/api/types/events"
 	apiutils "github.com/gravitational/teleport/api/utils"
 	"github.com/gravitational/teleport/api/utils/retryutils"
-	"github.com/gravitational/teleport/lib/observability/metrics"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/lib/utils/interval"
@@ -110,11 +109,6 @@ func NewUploadCompleter(cfg UploadCompleterConfig) (*UploadCompleter, error) {
 			teleport.ComponentKey: teleport.Component(cfg.Component, "completer"),
 		}),
 		closeC: make(chan struct{}),
-	}
-
-	err := metrics.RegisterPrometheusCollectors(incompleteSessionUploads)
-	if err != nil {
-		return nil, trace.Wrap(err)
 	}
 
 	return u, nil

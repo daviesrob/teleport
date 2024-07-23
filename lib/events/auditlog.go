@@ -37,14 +37,12 @@ import (
 
 	"github.com/gravitational/trace"
 	"github.com/jonboulle/clockwork"
-	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/gravitational/teleport"
 	apidefaults "github.com/gravitational/teleport/api/defaults"
 	apievents "github.com/gravitational/teleport/api/types/events"
 	"github.com/gravitational/teleport/lib/defaults"
-	"github.com/gravitational/teleport/lib/observability/metrics"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/utils"
 )
@@ -111,72 +109,6 @@ const (
 	// AbandonedUploadPollingRate defines how often to check for
 	// abandoned uploads which need to be completed.
 	AbandonedUploadPollingRate = apidefaults.SessionTrackerTTL / 6
-)
-
-var (
-	auditOpenFiles = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "audit_server_open_files",
-			Help: "Number of open audit files",
-		},
-	)
-
-	auditDiskUsed = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "audit_percentage_disk_space_used",
-			Help: "Percentage disk space used.",
-		},
-	)
-
-	auditFailedDisk = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "audit_failed_disk_monitoring",
-			Help: "Number of times disk monitoring failed.",
-		},
-	)
-	// AuditFailedEmit increments the counter if audit event failed to emit
-	AuditFailedEmit = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "audit_failed_emit_events",
-			Help: "Number of times emitting audit event failed.",
-		},
-	)
-
-	auditEmitEvent = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: teleport.MetricNamespace,
-			Name:      "audit_emit_events",
-			Help:      "Number of audit events emitted",
-		},
-	)
-
-	auditEmitEventSizes = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: teleport.MetricNamespace,
-			Name:      "audit_emitted_event_sizes",
-			Help:      "Size of single events emitted",
-			Buckets:   prometheus.ExponentialBucketsRange(64, 2*1024*1024*1024 /*2GiB*/, 16),
-		})
-
-	// MetricStoredTrimmedEvents counts the number of events that were trimmed
-	// before being stored.
-	MetricStoredTrimmedEvents = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: teleport.MetricNamespace,
-			Name:      "audit_stored_trimmed_events",
-			Help:      "Number of events that were trimmed before being stored",
-		})
-
-	// MetricQueriedTrimmedEvents counts the number of events that were trimmed
-	// before being returned from a query.
-	MetricQueriedTrimmedEvents = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: teleport.MetricNamespace,
-			Name:      "audit_queried_trimmed_events",
-			Help:      "Number of events that were trimmed before being returned from a query",
-		})
-
-	prometheusCollectors = []prometheus.Collector{auditOpenFiles, auditDiskUsed, auditFailedDisk, AuditFailedEmit, auditEmitEvent, auditEmitEventSizes, MetricStoredTrimmedEvents, MetricQueriedTrimmedEvents}
 )
 
 // AuditLog is a new combined facility to record Teleport events and
@@ -289,11 +221,6 @@ func (a *AuditLogConfig) CheckAndSetDefaults() error {
 // NewAuditLog creates and returns a new Audit Log object which will store its log files in
 // a given directory.
 func NewAuditLog(cfg AuditLogConfig) (*AuditLog, error) {
-	err := metrics.RegisterPrometheusCollectors(prometheusCollectors...)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	if err := cfg.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1092,23 +1019,6 @@ func (l *AuditLog) periodicSpaceMonitor() {
 
 	for {
 		select {
-		case <-ticker.C:
-			// Find out what percentage of disk space is used. If the syscall fails,
-			// emit that to prometheus as well.
-			usedPercent, err := utils.PercentUsed(l.DataDir)
-			if err != nil {
-				auditFailedDisk.Inc()
-				log.Warnf("Disk space monitoring failed: %v.", err)
-				continue
-			}
-
-			// Update prometheus gauge with the percentage disk space used.
-			auditDiskUsed.Set(usedPercent)
-
-			// If used percentage goes above the alerting level, write to logs as well.
-			if usedPercent > float64(DiskAlertThreshold) {
-				log.Warnf("Free disk space for audit log is running low, %v%% of disk used.", usedPercent)
-			}
 		case <-l.ctx.Done():
 			return
 		}

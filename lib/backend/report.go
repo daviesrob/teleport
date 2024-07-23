@@ -36,7 +36,6 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/lib/observability/metrics"
 	"github.com/gravitational/teleport/lib/observability/tracing"
 )
 
@@ -92,11 +91,6 @@ type Reporter struct {
 
 // NewReporter returns a new Reporter.
 func NewReporter(cfg ReporterConfig) (*Reporter, error) {
-	err := metrics.RegisterPrometheusCollectors(prometheusCollectors...)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	if err := cfg.CheckAndSetDefaults(); err != nil {
 		return nil, trace.Wrap(err)
 	}

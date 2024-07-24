@@ -24,8 +24,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gravitational/trace"
-
-	"github.com/gravitational/teleport/api/utils/aws"
 )
 
 // SSHRouteMatcher is a helper used to decide if an ssh dial request should match
@@ -89,7 +87,7 @@ func NewSSHRouteMatcher(host, port string, caseInsensitive bool) SSHRouteMatcher
 
 func newSSHRouteMatcher(cfg SSHRouteMatcherConfig) SSHRouteMatcher {
 	_, err := uuid.Parse(cfg.Host)
-	dialByID := err == nil || aws.IsEC2NodeID(cfg.Host)
+	dialByID := err == nil
 
 	var ips []string
 	if !(cfg.DisableUnqualifiedLookups && !strings.Contains(cfg.Host, ".")) {

@@ -114,11 +114,6 @@ func (a *DiscoveryConfig) CheckAndSetDefaults() error {
 	if a.Spec.AWS == nil {
 		a.Spec.AWS = make([]types.AWSMatcher, 0)
 	}
-	for i := range a.Spec.AWS {
-		if err := a.Spec.AWS[i].CheckAndSetDefaults(); err != nil {
-			return trace.Wrap(err)
-		}
-	}
 
 	if a.Spec.Azure == nil {
 		a.Spec.Azure = make([]types.AzureMatcher, 0)

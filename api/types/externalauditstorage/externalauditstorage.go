@@ -29,7 +29,6 @@ import (
 	"github.com/gravitational/teleport/api/types/header"
 	"github.com/gravitational/teleport/api/types/header/convert/legacy"
 	"github.com/gravitational/teleport/api/utils"
-	"github.com/gravitational/teleport/api/utils/aws"
 )
 
 const (
@@ -192,30 +191,6 @@ func (a *ExternalAuditStorage) CheckAndSetDefaults() error {
 
 	if a.Spec.IntegrationName == "" {
 		return trace.BadParameter("integration_name required")
-	}
-	if err := aws.IsValidIAMPolicyName(a.Spec.PolicyName); err != nil {
-		return trace.Wrap(err, "validating policy_name")
-	}
-	if err := aws.IsValidRegion(a.Spec.Region); err != nil {
-		return trace.Wrap(err, "validating region")
-	}
-	if err := ValidateS3URI(a.Spec.SessionRecordingsURI); err != nil {
-		return trace.Wrap(err, "validating session_recordings_uri")
-	}
-	if err := ValidateS3URI(a.Spec.AuditEventsLongTermURI); err != nil {
-		return trace.Wrap(err, "validating audit_events_long_term_uri")
-	}
-	if err := ValidateS3URI(a.Spec.AthenaResultsURI); err != nil {
-		return trace.Wrap(err, "validating athena_results_uri")
-	}
-	if err := aws.IsValidAthenaWorkgroupName(a.Spec.AthenaWorkgroup); err != nil {
-		return trace.Wrap(err, "validating athena_workgroup")
-	}
-	if err := aws.IsValidGlueResourceName(a.Spec.GlueDatabase); err != nil {
-		return trace.Wrap(err, "validating glue_database")
-	}
-	if err := aws.IsValidGlueResourceName(a.Spec.GlueTable); err != nil {
-		return trace.Wrap(err, "validating glue_table")
 	}
 
 	return nil

@@ -32,7 +32,6 @@ import (
 
 	apidefaults "github.com/gravitational/teleport/api/defaults"
 	"github.com/gravitational/teleport/api/types"
-	awsapiutils "github.com/gravitational/teleport/api/utils/aws"
 	"github.com/gravitational/teleport/api/utils/azure"
 	"github.com/gravitational/teleport/api/utils/gcp"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -169,12 +168,6 @@ func (c *ForwardToHostHandlerConfig) SetDefaults() {
 // MatchAllRequests is a MatchFunc that returns true for all requests.
 func MatchAllRequests(req *http.Request) bool {
 	return true
-}
-
-// MatchAWSRequests is a MatchFunc that returns true if request is an AWS API
-// request.
-func MatchAWSRequests(req *http.Request) bool {
-	return awsapiutils.IsAWSEndpoint(req.Host)
 }
 
 // MatchAzureRequests is a MatchFunc that returns true if request is an Azure API

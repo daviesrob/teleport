@@ -36,7 +36,6 @@ type Services interface {
 	Restrictions
 	Apps
 	DatabaseServices
-	Kubernetes
 	AppSession
 	SnowflakeSession
 	SAMLIdPSession

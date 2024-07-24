@@ -349,7 +349,6 @@ type ResourceGetter interface {
 	DatabaseServersGetter
 	AppServersGetter
 	WindowsDesktopGetter
-	KubernetesServerGetter
 	SAMLIdpServiceProviderGetter
 }
 
@@ -434,11 +433,6 @@ func (c *UnifiedResourceCache) getResourcesAndUpdateCurrent(ctx context.Context)
 		return trace.Wrap(err)
 	}
 
-	newKubes, err := c.getKubeServers(ctx)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
 	newApps, err := c.getAppServers(ctx)
 	if err != nil {
 		return trace.Wrap(err)
@@ -466,7 +460,6 @@ func (c *UnifiedResourceCache) getResourcesAndUpdateCurrent(ctx context.Context)
 	putResources[types.Server](c, newNodes)
 	putResources[types.DatabaseServer](c, newDbs)
 	putResources[types.AppServer](c, newApps)
-	putResources[types.KubeServer](c, newKubes)
 	putResources[types.SAMLIdPServiceProvider](c, newSAMLApps)
 	putResources[types.WindowsDesktop](c, newDesktops)
 	c.stale = false
@@ -502,26 +495,6 @@ func (c *UnifiedResourceCache) getDatabaseServers(ctx context.Context) ([]types.
 		}
 		unique[db.GetName()] = struct{}{}
 		resources = append(resources, dbServer)
-	}
-
-	return resources, nil
-}
-
-// getKubeServers will get all kube servers
-func (c *UnifiedResourceCache) getKubeServers(ctx context.Context) ([]types.KubeServer, error) {
-	newKubes, err := c.GetKubernetesServers(ctx)
-	if err != nil {
-		return nil, trace.Wrap(err, "getting kube servers for unified resource watcher")
-	}
-	unique := map[string]struct{}{}
-	resources := make([]types.KubeServer, 0, len(newKubes))
-	for _, kubeServer := range newKubes {
-		cluster := kubeServer.GetCluster()
-		if _, ok := unique[cluster.GetName()]; ok {
-			continue
-		}
-		unique[cluster.GetName()] = struct{}{}
-		resources = append(resources, kubeServer)
 	}
 
 	return resources, nil

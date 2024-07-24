@@ -85,7 +85,6 @@ import (
 	"github.com/gravitational/teleport/lib/shell"
 	"github.com/gravitational/teleport/lib/sshutils/sftp"
 	"github.com/gravitational/teleport/lib/sshutils/x11"
-	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/lib/utils/diagnostics/latency"
 	"github.com/gravitational/teleport/lib/utils/mlock"
@@ -772,27 +771,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	daemonStop := daemon.Command("stop", "Gracefully stops a process on Windows by sending Ctrl-Break to it.").Hidden()
 	daemonStop.Flag("pid", "PID to be stopped").IntVar(&cf.DaemonPid)
 
-	// Applications.
-	apps := app.Command("apps", "View and control proxied applications.").Alias("app")
-	apps.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
-	lsApps := apps.Command("ls", "List available applications.")
-	lsApps.Flag("verbose", "Show extra application fields.").Short('v').BoolVar(&cf.Verbose)
-	lsApps.Flag("search", searchHelp).StringVar(&cf.SearchKeywords)
-	lsApps.Flag("query", queryHelp).StringVar(&cf.PredicateExpression)
-	lsApps.Flag("format", defaults.FormatFlagDescription(defaults.DefaultFormats...)).Short('f').Default(teleport.Text).EnumVar(&cf.Format, defaults.DefaultFormats...)
-	lsApps.Arg("labels", labelHelp).StringVar(&cf.Labels)
-	lsApps.Flag("all", "List apps from all clusters and proxies.").Short('R').BoolVar(&cf.ListAll)
-	appLogin := apps.Command("login", "Retrieve short-lived certificate for an app.")
-	appLogin.Arg("app", "App name to retrieve credentials for. Can be obtained from `tsh apps ls` output.").Required().StringVar(&cf.AppName)
-	appLogin.Flag("quiet", "Quiet mode").Short('q').BoolVar(&cf.Quiet)
-	appLogout := apps.Command("logout", "Remove app certificate.")
-	appLogout.Arg("app", "App to remove credentials for.").StringVar(&cf.AppName)
-	appConfig := apps.Command("config", "Print app connection information.")
-	appConfig.Arg("app", "App to print information for. Required when logged into multiple apps.").StringVar(&cf.AppName)
-	appConfig.Flag("format", fmt.Sprintf("Optional print format, one of: %q to print app address, %q to print CA cert path, %q to print cert path, %q print key path, %q to print example curl command, %q or %q to print everything as JSON or YAML.",
-		appFormatURI, appFormatCA, appFormatCert, appFormatKey, appFormatCURL, appFormatJSON, appFormatYAML),
-	).Short('f').StringVar(&cf.Format)
-
 	// Recordings.
 	recordings := app.Command("recordings", "View and control session recordings.").Alias("recording")
 	lsRecordings := recordings.Command("ls", "List recorded sessions.")
@@ -811,11 +789,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	proxySSH.Arg("[user@]host", "Remote hostname and the login to use").Required().StringVar(&cf.UserHost)
 	proxySSH.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
 	proxySSH.Flag("no-resume", "Disable SSH connection resumption").Envar(noResumeEnvVar).BoolVar(&cf.DisableSSHResumption)
-
-	proxyApp := proxy.Command("app", "Start local TLS proxy for app connection when using Teleport in single-port mode.")
-	proxyApp.Arg("app", "The name of the application to start local proxy for").Required().StringVar(&cf.AppName)
-	proxyApp.Flag("port", "Specifies the source port used by by the proxy app listener").Short('p').StringVar(&cf.LocalProxyPort)
-	proxyApp.Flag("cluster", clusterHelp).Short('c').StringVar(&cf.SiteName)
 
 	// Databases.
 
@@ -1229,23 +1202,13 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 		cf.Context, cancel = context.WithTimeout(cf.Context, constants.TimeoutGetClusterAlerts)
 		defer cancel()
 		err = onStatus(&cf)
-	case lsApps.FullCommand():
-		err = onApps(&cf)
 	case lsRecordings.FullCommand():
 		err = onRecordings(&cf)
 	case exportRecordings.FullCommand():
 		err = onExportRecording(&cf)
-	case appLogin.FullCommand():
-		err = onAppLogin(&cf)
-	case appLogout.FullCommand():
-		err = onAppLogout(&cf)
-	case appConfig.FullCommand():
-		err = onAppConfig(&cf)
 
 	case proxySSH.FullCommand():
 		err = onProxyCommandSSH(&cf)
-	case proxyApp.FullCommand():
-		err = onProxyCommandApp(&cf)
 
 	case environment.FullCommand():
 		err = onEnvironment(&cf)
@@ -2382,79 +2345,6 @@ func printNodesAsText[T types.Server](output io.Writer, nodes []T, verbose bool)
 	}
 
 	return nil
-}
-
-func showApps(apps []types.Application, active []tlsca.RouteToApp, w io.Writer, format string, verbose bool) error {
-	format = strings.ToLower(format)
-	switch format {
-	case teleport.Text, "":
-		showAppsAsText(apps, active, verbose, w)
-	case teleport.JSON, teleport.YAML:
-		out, err := serializeApps(apps, format)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		fmt.Fprintln(w, out)
-	default:
-		return trace.BadParameter("unsupported format %q", format)
-	}
-	return nil
-}
-
-func serializeApps(apps []types.Application, format string) (string, error) {
-	if apps == nil {
-		apps = []types.Application{}
-	}
-	var out []byte
-	var err error
-	if format == teleport.JSON {
-		out, err = utils.FastMarshalIndent(apps, "", "  ")
-	} else {
-		out, err = yaml.Marshal(apps)
-	}
-	return string(out), trace.Wrap(err)
-}
-
-func getAppRow(proxy, cluster string, app types.Application, active []tlsca.RouteToApp, verbose bool) []string {
-	var row []string
-	if proxy != "" && cluster != "" {
-		row = append(row, proxy, cluster)
-	}
-
-	name := app.GetName()
-	for _, a := range active {
-		if name == a.Name {
-			name = fmt.Sprintf("> %v", name)
-			break
-		}
-	}
-
-	labels := common.FormatLabels(app.GetAllLabels(), verbose)
-	if verbose {
-		row = append(row, name, app.GetDescription(), app.GetProtocol(), app.GetPublicAddr(), app.GetURI(), labels)
-	} else {
-		row = append(row, name, app.GetDescription(), app.GetProtocol(), app.GetPublicAddr(), labels)
-	}
-
-	return row
-}
-
-func showAppsAsText(apps []types.Application, active []tlsca.RouteToApp, verbose bool, w io.Writer) {
-	var rows [][]string
-	for _, app := range apps {
-		rows = append(rows, getAppRow("", "", app, active, verbose))
-	}
-	// In verbose mode, print everything on a single line and include host UUID.
-	// In normal mode, chunk the labels, print two per line and allow multiple
-	// lines per node.
-	var t asciitable.Table
-	if verbose {
-		t = asciitable.MakeTable([]string{"Application", "Description", "Type", "Public Address", "URI", "Labels"}, rows...)
-	} else {
-		t = asciitable.MakeTableWithTruncatedColumn(
-			[]string{"Application", "Description", "Type", "Public Address", "Labels"}, rows, "Labels")
-	}
-	fmt.Fprintln(w, t.AsBuffer().String())
 }
 
 // onListClusters executes 'tsh clusters' command
@@ -4269,196 +4159,6 @@ func reissueWithRequests(cf *CLIConf, tc *client.TeleportClient, newRequests []s
 		return trace.Wrap(err)
 	}
 	return nil
-}
-
-func onApps(cf *CLIConf) error {
-	if cf.ListAll {
-		return trace.Wrap(listAppsAllClusters(cf))
-	}
-	tc, err := makeClient(cf)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	// Get a list of all applications.
-	var apps []types.Application
-	err = client.RetryWithRelogin(cf.Context, tc, func() error {
-		apps, err = tc.ListApps(cf.Context, nil /* custom filter */)
-		return err
-	})
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	// Retrieve profile to be able to show which apps user is logged into.
-	profile, err := tc.ProfileStatus()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	// Sort by app name.
-	sort.Slice(apps, func(i, j int) bool {
-		return apps[i].GetName() < apps[j].GetName()
-	})
-
-	return trace.Wrap(showApps(apps, profile.Apps, cf.Stdout(), cf.Format, cf.Verbose))
-}
-
-type appListing struct {
-	Proxy   string            `json:"proxy"`
-	Cluster string            `json:"cluster"`
-	App     types.Application `json:"app"`
-}
-
-type appListings []appListing
-
-func (l appListings) Len() int {
-	return len(l)
-}
-
-func (l appListings) Less(i, j int) bool {
-	if l[i].Proxy != l[j].Proxy {
-		return l[i].Proxy < l[j].Proxy
-	}
-	if l[i].Cluster != l[j].Cluster {
-		return l[i].Cluster < l[j].Cluster
-	}
-	return l[i].App.GetName() < l[j].App.GetName()
-}
-
-func (l appListings) Swap(i, j int) {
-	l[i], l[j] = l[j], l[i]
-}
-
-func listAppsAllClusters(cf *CLIConf) error {
-	clusters, err := getClusterClients(cf, types.KindAppServer)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	defer func() {
-		// close all clients
-		for _, cluster := range clusters {
-			_ = cluster.Close()
-		}
-	}()
-
-	// Fetch listings for all clusters in parallel with an upper limit
-	group, groupCtx := errgroup.WithContext(cf.Context)
-	group.SetLimit(10)
-
-	// mu guards access to dbListings
-	var (
-		mu       sync.Mutex
-		listings appListings
-		errors   []error
-	)
-	for _, cluster := range clusters {
-		cluster := cluster
-		if cluster.connectionError != nil {
-			mu.Lock()
-			errors = append(errors, cluster.connectionError)
-			mu.Unlock()
-			continue
-		}
-
-		logger := log.WithField("cluster", cluster.name)
-		group.Go(func() error {
-			servers, err := apiclient.GetAllResources[types.AppServer](groupCtx, cluster.auth, &cluster.req)
-			if err != nil {
-				logger.Errorf("Failed to get app servers: %v.", err)
-
-				mu.Lock()
-				errors = append(errors, trace.ConnectionProblem(err, "failed to list app serves for cluster %s: %v", cluster.name, err))
-				mu.Unlock()
-				return nil
-			}
-
-			apps := make([]types.Application, 0, len(servers))
-			for _, srv := range servers {
-				apps = append(apps, srv.GetApp())
-			}
-			apps = types.DeduplicateApps(apps)
-
-			localAppListings := make([]appListing, 0, len(servers))
-			for _, app := range apps {
-				localAppListings = append(localAppListings, appListing{
-					Proxy:   cluster.profile.ProxyURL.Host,
-					Cluster: cluster.name,
-					App:     app,
-				})
-			}
-
-			mu.Lock()
-			listings = append(listings, localAppListings...)
-			mu.Unlock()
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		return trace.Wrap(err)
-	}
-
-	if len(listings) == 0 && len(errors) > 0 {
-		return trace.NewAggregate(errors...)
-	}
-
-	sort.Sort(listings)
-
-	profile, err := cf.ProfileStatus()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	var active []tlsca.RouteToApp
-	if profile != nil {
-		active = profile.Apps
-	}
-
-	format := strings.ToLower(cf.Format)
-	switch format {
-	case teleport.Text, "":
-		printAppsWithClusters(listings, active, cf.Verbose)
-	case teleport.JSON, teleport.YAML:
-		out, err := serializeAppsWithClusters(listings, format)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		fmt.Fprintln(cf.Stdout(), out)
-	default:
-		return trace.BadParameter("unsupported format %q", format)
-	}
-	return nil
-}
-
-func printAppsWithClusters(apps []appListing, active []tlsca.RouteToApp, verbose bool) {
-	var rows [][]string
-	for _, app := range apps {
-		rows = append(rows, getAppRow(app.Proxy, app.Cluster, app.App, active, verbose))
-	}
-	// In verbose mode, print everything on a single line and include host UUID.
-	// In normal mode, chunk the labels, print two per line and allow multiple
-	// lines per node.
-	var t asciitable.Table
-	if verbose {
-		t = asciitable.MakeTable([]string{"Proxy", "Cluster", "Application", "Description", "Type", "Public Address", "URI", "Labels"}, rows...)
-	} else {
-		t = asciitable.MakeTableWithTruncatedColumn(
-			[]string{"Proxy", "Cluster", "Application", "Description", "Type", "Public Address", "Labels"}, rows, "Labels")
-	}
-	fmt.Println(t.AsBuffer().String())
-}
-
-func serializeAppsWithClusters(apps []appListing, format string) (string, error) {
-	var out []byte
-	var err error
-	if format == teleport.JSON {
-		out, err = utils.FastMarshalIndent(apps, "", "  ")
-	} else {
-		out, err = yaml.Marshal(apps)
-	}
-	return string(out), trace.Wrap(err)
 }
 
 func onRecordings(cf *CLIConf) error {

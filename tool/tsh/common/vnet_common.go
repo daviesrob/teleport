@@ -18,15 +18,12 @@ package common
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"log/slog"
 	"sync"
 
 	"github.com/gravitational/trace"
 
-	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/client/clientcache"
@@ -73,26 +70,6 @@ func (p *vnetAppProvider) ListProfiles() ([]string, error) {
 // [leafClusterName] may be empty when requesting a client for the root cluster.
 func (p *vnetAppProvider) GetCachedClient(ctx context.Context, profileName, leafClusterName string) (vnet.ClusterClient, error) {
 	return p.clientCache.Get(ctx, profileName, leafClusterName)
-}
-
-// ReissueAppCert returns a new app certificate for the given app in the named profile and leaf cluster.
-// It uses retryWithRelogin to issue the new app cert. A relogin may not be necessary if the app cert lifetime
-// was shorter than the cluster cert lifetime, or if the user has already re-logged in to the cluster.
-// If a cluster relogin is completed, the cluster client cache will be cleared for the root cluster and all
-// leaf clusters of that root.
-func (p *vnetAppProvider) ReissueAppCert(ctx context.Context, profileName, leafClusterName string, app types.Application) (tls.Certificate, error) {
-	tc, err := p.newTeleportClient(ctx, profileName, leafClusterName)
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err)
-	}
-
-	var cert tls.Certificate
-	err = p.retryWithRelogin(ctx, tc, func() error {
-		var err error
-		cert, err = p.reissueAppCert(ctx, tc, profileName, leafClusterName, app)
-		return trace.Wrap(err, "reissuing app cert")
-	})
-	return cert, trace.Wrap(err)
 }
 
 // GetDialOptions returns ALPN dial options for the profile.
@@ -168,49 +145,6 @@ func (p *vnetAppProvider) retryWithRelogin(ctx context.Context, tc *client.Telep
 		client.WithMakeCurrentProfile(false),
 	)
 	return client.RetryWithRelogin(ctx, tc, fn, opts...)
-}
-
-func (p *vnetAppProvider) reissueAppCert(ctx context.Context, tc *client.TeleportClient, profileName, leafClusterName string, app types.Application) (tls.Certificate, error) {
-	slog.InfoContext(ctx, "Reissuing cert for app.", "app_name", app.GetName(), "profile", profileName, "leaf_cluster", leafClusterName)
-
-	routeToApp := proto.RouteToApp{
-		Name:        app.GetName(),
-		PublicAddr:  app.GetPublicAddr(),
-		ClusterName: tc.SiteName,
-	}
-
-	profile, err := tc.ProfileStatus()
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err, "loading client profile")
-	}
-
-	appCertParams := client.ReissueParams{
-		RouteToCluster: tc.SiteName,
-		RouteToApp:     routeToApp,
-		AccessRequests: profile.ActiveRequests.AccessRequests,
-		RequesterName:  proto.UserCertsRequest_TSH_APP_LOCAL_PROXY,
-	}
-
-	clusterClient, err := p.clientCache.Get(ctx, profileName, leafClusterName)
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err, "getting cached cluster client")
-	}
-	rootClient, err := p.clientCache.Get(ctx, profileName, "")
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err, "getting cached root client")
-	}
-
-	key, err := appLogin(ctx, tc, clusterClient, rootClient.AuthClient, appCertParams)
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err, "logging in to app")
-	}
-
-	cert, err := key.AppTLSCert(app.GetName())
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err, "getting TLS cert from key")
-	}
-
-	return cert, nil
 }
 
 func (p *vnetAppProvider) newTeleportClient(ctx context.Context, profileName, leafClusterName string) (*client.TeleportClient, error) {

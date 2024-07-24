@@ -41,7 +41,6 @@ import (
 	libclient "github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/srv/alpnproxy"
-	alpncommon "github.com/gravitational/teleport/lib/srv/alpnproxy/common"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
 )
@@ -144,61 +143,6 @@ func formatCommand(cmd *exec.Cmd) string {
 type templateCommandItem struct {
 	Description string
 	Command     string
-}
-
-func alpnProtocolForApp(app types.Application) alpncommon.Protocol {
-	if app.IsTCP() {
-		return alpncommon.ProtocolTCP
-	}
-	return alpncommon.ProtocolHTTP
-}
-
-func onProxyCommandApp(cf *CLIConf) error {
-	tc, err := makeClient(cf)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	appInfo, err := getAppInfo(cf, tc, nil /*matchRouteToApp*/)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	app, err := appInfo.GetApp(cf.Context, tc)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	proxyApp := newLocalProxyApp(tc, appInfo, cf.LocalProxyPort, cf.InsecureSkipVerify)
-	if err := proxyApp.StartLocalProxy(cf.Context, alpnproxy.WithALPNProtocol(alpnProtocolForApp(app))); err != nil {
-		return trace.Wrap(err)
-	}
-
-	defer func() {
-		if err := proxyApp.Close(); err != nil {
-			log.WithError(err).Error("Failed to close app proxy.")
-		}
-	}()
-
-	// Proxy connections until the client terminates the command.
-	<-cf.Context.Done()
-	return nil
-}
-
-func loadAppCertificate(tc *libclient.TeleportClient, appName string) (tls.Certificate, error) {
-	key, err := tc.LocalAgent().GetKey(tc.SiteName, libclient.WithAppCerts{})
-	if err != nil {
-		return tls.Certificate{}, trace.Wrap(err)
-	}
-
-	appCert, err := key.AppTLSCert(appName)
-	if trace.IsNotFound(err) {
-		return tls.Certificate{}, trace.NotFound("please login into the application first: 'tsh apps login %v'", appName)
-	} else if err != nil {
-		return tls.Certificate{}, trace.Wrap(err)
-	}
-
-	return appCert, nil
 }
 
 func loadDBCertificate(tc *libclient.TeleportClient, dbName string) (tls.Certificate, error) {

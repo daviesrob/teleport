@@ -25,8 +25,6 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/gravitational/teleport/api/types"
-	apiutils "github.com/gravitational/teleport/api/utils"
-	azureutils "github.com/gravitational/teleport/api/utils/azure"
 	"github.com/gravitational/teleport/lib/utils/typical"
 )
 
@@ -70,41 +68,6 @@ func AssumeRoleFromAWSMetadata(meta *types.AWS) types.AssumeRole {
 		RoleARN:    meta.AssumeRoleARN,
 		ExternalID: meta.ExternalID,
 	}
-}
-
-// SimplifyAzureMatchers returns simplified Azure Matchers.
-// Selectors are deduplicated, wildcard in a selector reduces the selector
-// to just the wildcard, and defaults are applied.
-func SimplifyAzureMatchers(matchers []types.AzureMatcher) []types.AzureMatcher {
-	result := make([]types.AzureMatcher, 0, len(matchers))
-	for _, m := range matchers {
-		subs := apiutils.Deduplicate(m.Subscriptions)
-		groups := apiutils.Deduplicate(m.ResourceGroups)
-		regions := apiutils.Deduplicate(m.Regions)
-		ts := apiutils.Deduplicate(m.Types)
-		if len(subs) == 0 || slices.Contains(subs, types.Wildcard) {
-			subs = []string{types.Wildcard}
-		}
-		if len(groups) == 0 || slices.Contains(groups, types.Wildcard) {
-			groups = []string{types.Wildcard}
-		}
-		if len(regions) == 0 || slices.Contains(regions, types.Wildcard) {
-			regions = []string{types.Wildcard}
-		} else {
-			for i, region := range regions {
-				regions[i] = azureutils.NormalizeLocation(region)
-			}
-		}
-		result = append(result, types.AzureMatcher{
-			Subscriptions:  subs,
-			ResourceGroups: groups,
-			Regions:        regions,
-			Types:          ts,
-			ResourceTags:   m.ResourceTags,
-			Params:         m.Params,
-		})
-	}
-	return result
 }
 
 // MatchResourceLabels returns true if any of the provided selectors matches the provided database.

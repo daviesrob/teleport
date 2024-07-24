@@ -31,9 +31,6 @@ import (
 	"golang.org/x/net/http/httpproxy"
 
 	apidefaults "github.com/gravitational/teleport/api/defaults"
-	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/api/utils/azure"
-	"github.com/gravitational/teleport/api/utils/gcp"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/utils"
 )
@@ -168,19 +165,6 @@ func (c *ForwardToHostHandlerConfig) SetDefaults() {
 // MatchAllRequests is a MatchFunc that returns true for all requests.
 func MatchAllRequests(req *http.Request) bool {
 	return true
-}
-
-// MatchAzureRequests is a MatchFunc that returns true if request is an Azure API
-// request.
-func MatchAzureRequests(req *http.Request) bool {
-	h := req.URL.Hostname()
-	return azure.IsAzureEndpoint(h) || types.TeleportAzureMSIEndpoint == h
-}
-
-// MatchGCPRequests is a MatchFunc that returns true if request is an GCP API request.
-func MatchGCPRequests(req *http.Request) bool {
-	h := req.URL.Hostname()
-	return gcp.IsGCPEndpoint(h)
 }
 
 // ForwardToHostHandler is a CONNECT request handler that forwards requests to

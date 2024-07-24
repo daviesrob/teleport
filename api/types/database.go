@@ -27,9 +27,6 @@ import (
 
 	"github.com/gravitational/teleport/api/types/compare"
 	"github.com/gravitational/teleport/api/utils"
-	atlasutils "github.com/gravitational/teleport/api/utils/atlas"
-	azureutils "github.com/gravitational/teleport/api/utils/azure"
-	gcputils "github.com/gravitational/teleport/api/utils/gcp"
 )
 
 var _ compare.IsEqual[Database] = (*DatabaseV3)(nil)
@@ -101,8 +98,6 @@ type Database interface {
 	GetManagedUsers() []string
 	// SetManagedUsers sets a list of database users that are managed by Teleport.
 	SetManagedUsers(users []string)
-	// GetMongoAtlas returns Mongo Atlas database metadata.
-	GetMongoAtlas() MongoAtlas
 	// IsRDS returns true if this is an RDS/Aurora database.
 	IsRDS() bool
 	// IsRDSProxy returns true if this is an RDS Proxy database.
@@ -121,12 +116,6 @@ type Database interface {
 	IsAWSHosted() bool
 	// IsCloudHosted returns true if database is hosted in the cloud (AWS, Azure or Cloud SQL).
 	IsCloudHosted() bool
-	// RequireAWSIAMRolesAsUsers returns true for database types that require
-	// AWS IAM roles as database users.
-	RequireAWSIAMRolesAsUsers() bool
-	// SupportAWSIAMRoleARNAsUsers returns true for database types that support
-	// AWS IAM roles as database users.
-	SupportAWSIAMRoleARNAsUsers() bool
 	// Copy returns a copy of this database resource.
 	Copy() *DatabaseV3
 	// GetAdminUser returns database privileged user information.
@@ -587,22 +576,6 @@ func (d *DatabaseV3) getAWSType() (string, bool) {
 
 // GetType returns the database type.
 func (d *DatabaseV3) GetType() string {
-	if d.GetMongoAtlas().Name != "" {
-		return DatabaseTypeMongoAtlas
-	}
-
-	if awsType, ok := d.getAWSType(); ok {
-		return awsType
-	}
-
-	if gcpType, ok := d.getGCPType(); ok {
-		return gcpType
-	}
-
-	if d.GetAzure().Name != "" {
-		return DatabaseTypeAzure
-	}
-
 	return DatabaseTypeSelfHosted
 }
 
@@ -681,68 +654,6 @@ func (d *DatabaseV3) CheckAndSetDefaults() error {
 			d.GetName())
 	}
 
-	// In case of RDS, Aurora or Redshift, AWS information such as region or
-	// cluster ID can be extracted from the endpoint if not provided.
-	switch {
-	case gcputils.IsSpannerEndpoint(d.Spec.URI) || d.IsSpanner():
-		if d.Spec.GCP.ProjectID == "" {
-			return trace.BadParameter("GCP Spanner database %q missing GCP project ID",
-				d.GetName())
-		}
-		if d.Spec.GCP.InstanceID == "" {
-			return trace.BadParameter("GCP Spanner database %q missing GCP instance ID",
-				d.GetName())
-		}
-	case azureutils.IsDatabaseEndpoint(d.Spec.URI):
-		// For Azure MySQL and PostgresSQL.
-		name, err := azureutils.ParseDatabaseEndpoint(d.Spec.URI)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		if d.Spec.Azure.Name == "" {
-			d.Spec.Azure.Name = name
-		}
-	case azureutils.IsCacheForRedisEndpoint(d.Spec.URI):
-		// ResourceID is required for fetching Redis tokens.
-		if d.Spec.Azure.ResourceID == "" {
-			return trace.BadParameter("database %q Azure resource ID is empty",
-				d.GetName())
-		}
-
-		name, err := azureutils.ParseCacheForRedisEndpoint(d.Spec.URI)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
-		if d.Spec.Azure.Name == "" {
-			d.Spec.Azure.Name = name
-		}
-	case azureutils.IsMSSQLServerEndpoint(d.Spec.URI):
-		if d.Spec.Azure.Name == "" {
-			name, err := azureutils.ParseMSSQLEndpoint(d.Spec.URI)
-			if err != nil {
-				return trace.Wrap(err)
-			}
-			d.Spec.Azure.Name = name
-		}
-	case atlasutils.IsAtlasEndpoint(d.Spec.URI):
-		name, err := atlasutils.ParseAtlasEndpoint(d.Spec.URI)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		d.Spec.MongoAtlas.Name = name
-	}
-
-	// Validate Cloud SQL specific configuration.
-	switch {
-	case d.Spec.GCP.ProjectID != "" && d.Spec.GCP.InstanceID == "":
-		return trace.BadParameter("database %q missing Cloud SQL instance ID",
-			d.GetName())
-	case d.Spec.GCP.ProjectID == "" && d.Spec.GCP.InstanceID != "":
-		return trace.BadParameter("database %q missing Cloud SQL project ID",
-			d.GetName())
-	}
-
 	// Admin user should only be specified for databases that support automatic
 	// user provisioning.
 	if d.GetAdminUser().Name != "" && !d.SupportsAutoUsers() {
@@ -805,70 +716,11 @@ func (d *DatabaseV3) SetManagedUsers(users []string) {
 	d.Status.ManagedUsers = users
 }
 
-// GetMongoAtlas returns Mongo Atlas database metadata.
-func (d *DatabaseV3) GetMongoAtlas() MongoAtlas {
-	return d.Spec.MongoAtlas
-}
-
-// RequireAWSIAMRolesAsUsers returns true for database types that require AWS
-// IAM roles as database users.
-// IMPORTANT: if you add a database that requires AWS IAM Roles as users,
-// and that database supports discovery, be sure to update RequireAWSIAMRolesAsUsersMatchers
-// in matchers_aws.go as well.
-func (d *DatabaseV3) RequireAWSIAMRolesAsUsers() bool {
-	awsType, ok := d.getAWSType()
-	if !ok {
-		return false
-	}
-
-	switch awsType {
-	case DatabaseTypeAWSKeyspaces,
-		DatabaseTypeDynamoDB,
-		DatabaseTypeOpenSearch,
-		DatabaseTypeRedshiftServerless,
-		DatabaseTypeDocumentDB:
-		return true
-	default:
-		return false
-	}
-}
-
-// SupportAWSIAMRoleARNAsUsers returns true for database types that support AWS
-// IAM roles as database users.
-func (d *DatabaseV3) SupportAWSIAMRoleARNAsUsers() bool {
-	switch d.GetType() {
-	// Note that databases in this list use IAM auth when:
-	// - the database user is a full AWS role ARN role
-	// - or the database user starts with "role/"
-	//
-	// Other database users will fallback to default auth methods (e.g X.509 for
-	// MongoAtlas, regular auth token for Redshift).
-	//
-	// Therefore it is important to make sure "/" is an invalid character for
-	// regular in-database usernames so that "role/" can be differentiated from
-	// regular usernames.
-	case DatabaseTypeMongoAtlas,
-		DatabaseTypeRedshift:
-		return true
-	default:
-		return false
-	}
-}
 
 // GetEndpointType returns the endpoint type of the database, if available.
 func (d *DatabaseV3) GetEndpointType() string {
 	if endpointType, ok := d.GetStaticLabels()[DiscoveryLabelEndpointType]; ok {
 		return endpointType
-	}
-	switch d.GetType() {
-	case DatabaseTypeElastiCache:
-		return d.GetAWS().ElastiCache.EndpointType
-	case DatabaseTypeMemoryDB:
-		return d.GetAWS().MemoryDB.EndpointType
-	case DatabaseTypeOpenSearch:
-		return d.GetAWS().OpenSearch.EndpointType
-	case DatabaseTypeDocumentDB:
-		return d.GetAWS().DocumentDB.EndpointType
 	}
 	return ""
 }

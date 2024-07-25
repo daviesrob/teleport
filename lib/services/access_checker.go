@@ -67,19 +67,6 @@ type AccessChecker interface {
 	// returns a combined list of allowed logins.
 	CheckLoginDuration(ttl time.Duration) ([]string, error)
 
-	// CheckKubeGroupsAndUsers check if role can login into kubernetes
-	// and returns two lists of combined allowed groups and users
-	CheckKubeGroupsAndUsers(ttl time.Duration, overrideTTL bool, matchers ...RoleMatcher) (groups []string, users []string, err error)
-
-	// CheckAWSRoleARNs returns a list of AWS role ARNs role is allowed to assume.
-	CheckAWSRoleARNs(ttl time.Duration, overrideTTL bool) ([]string, error)
-
-	// CheckAzureIdentities returns a list of Azure identities the user is allowed to assume.
-	CheckAzureIdentities(ttl time.Duration, overrideTTL bool) ([]string, error)
-
-	// CheckGCPServiceAccounts returns a list of GCP service accounts the user is allowed to assume.
-	CheckGCPServiceAccounts(ttl time.Duration, overrideTTL bool) ([]string, error)
-
 	// CheckAccessToSAMLIdP checks access to the SAML IdP.
 	//
 	// TODO(Joerger): make Access state non-variadic once /e is updated to provide it.
@@ -142,22 +129,6 @@ type AccessChecker interface {
 	// EnhancedRecordingSet returns a set of events that will be recorded
 	// for enhanced session recording.
 	EnhancedRecordingSet() map[string]bool
-
-	// CheckDatabaseNamesAndUsers returns database names and users this role
-	// is allowed to use.
-	CheckDatabaseNamesAndUsers(ttl time.Duration, overrideTTL bool) (names []string, users []string, err error)
-
-	// DatabaseAutoUserMode returns whether a user should be auto-created in
-	// the database.
-	DatabaseAutoUserMode(types.Database) (types.CreateDatabaseUserMode, error)
-
-	// CheckDatabaseRoles returns a list of database roles to assign, when
-	// auto-user provisioning is enabled. If no user-requested roles, all
-	// allowed roles are returned.
-	CheckDatabaseRoles(database types.Database, userRequestedRoles []string) (roles []string, err error)
-
-	// GetDatabasePermissions returns a set of database permissions applicable for the user.
-	GetDatabasePermissions(database types.Database) (allow types.DatabasePermissions, deny types.DatabasePermissions, err error)
 
 	// CheckImpersonate checks whether current user is allowed to impersonate
 	// users and roles
@@ -247,12 +218,6 @@ type AccessChecker interface {
 	// RoleSet. This extra set of entities may be sourced e.g. from user connection
 	// history.
 	EnumerateEntities(resource AccessCheckable, listFn roleEntitiesListFn, newMatcher roleMatcherFactoryFn, extraEntities ...string) EnumerationResult
-
-	// EnumerateDatabaseUsers specializes EnumerateEntities to enumerate db_users.
-	EnumerateDatabaseUsers(database types.Database, extraUsers ...string) (EnumerationResult, error)
-
-	// EnumerateDatabaseNames specializes EnumerateEntities to enumerate db_names.
-	EnumerateDatabaseNames(database types.Database, extraNames ...string) EnumerationResult
 
 	// GetAllowedLoginsForResource returns all of the allowed logins for the passed resource.
 	//
@@ -667,40 +632,6 @@ func (a *accessChecker) GetDatabasePermissions(database types.Database) (allow t
 	return allow, deny, nil
 }
 
-// EnumerateDatabaseUsers specializes EnumerateEntities to enumerate db_users.
-func (a *accessChecker) EnumerateDatabaseUsers(database types.Database, extraUsers ...string) (EnumerationResult, error) {
-	// When auto-user provisioning is enabled, only Teleport username is allowed.
-	if database.SupportsAutoUsers() && database.GetAdminUser().Name != "" {
-		result := NewEnumerationResult()
-		autoUser, err := a.DatabaseAutoUserMode(database)
-		if err != nil {
-			return result, trace.Wrap(err)
-		} else if autoUser.IsEnabled() {
-			result.allowedDeniedMap[a.info.Username] = true
-			return result, nil
-		}
-	}
-
-	listFn := func(role types.Role, condition types.RoleConditionType) []string {
-		return role.GetDatabaseUsers(condition)
-	}
-	newMatcher := func(user string) RoleMatcher {
-		return NewDatabaseUserMatcher(database, user)
-	}
-	return a.EnumerateEntities(database, listFn, newMatcher, extraUsers...), nil
-}
-
-// EnumerateDatabaseNames specializes EnumerateEntities to enumerate db_names.
-func (a *accessChecker) EnumerateDatabaseNames(database types.Database, extraNames ...string) EnumerationResult {
-	listFn := func(role types.Role, condition types.RoleConditionType) []string {
-		return role.GetDatabaseNames(condition)
-	}
-	newMatcher := func(dbName string) RoleMatcher {
-		return &DatabaseNameMatcher{Name: dbName}
-	}
-	return a.EnumerateEntities(database, listFn, newMatcher, extraNames...)
-}
-
 // roleEntitiesListFn is used for listing a role's allowed/denied entities.
 type roleEntitiesListFn func(types.Role, types.RoleConditionType) []string
 
@@ -823,14 +754,6 @@ func (a *accessChecker) GetAllowedLoginsForResource(resource AccessCheckable) ([
 	switch resource.GetKind() {
 	case types.KindNode:
 		newLoginMatcher = NewLoginMatcher
-	case types.KindWindowsDesktop:
-		newLoginMatcher = NewWindowsLoginMatcher
-	case types.KindApp:
-		if !resourceIsApp || !resourceAsApp.IsAWSConsole() {
-			return nil, trace.BadParameter("received unsupported resource type for Application: %T", resource)
-		}
-
-		newLoginMatcher = NewAppAWSLoginMatcher
 	default:
 		return nil, trace.BadParameter("received unsupported resource kind: %s", resource.GetKind())
 	}

@@ -1913,65 +1913,7 @@ func (m *RequestValidator) pruneResourceRequestRoles(
 		}
 	}
 
-	allRoles, err := FetchRoles(roles, m.getter, m.userState.GetTraits())
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	resources, err := m.getUnderlyingResourcesByResourceIDs(ctx, resourceIDs)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	necessaryRoles := make(map[string]struct{})
-	for _, resource := range resources {
-		var (
-			rolesForResource []types.Role
-			resourceMatcher  *KubeResourcesMatcher
-		)
-		kubernetesResources, err := getKubeResourcesFromResourceIDs(resourceIDs, resource.GetName())
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		if len(kubernetesResources) > 0 {
-			resourceMatcher = NewKubeResourcesMatcher(kubernetesResources)
-		}
-		for _, role := range allRoles {
-			roleAllowsAccess, err := m.roleAllowsResource(ctx, role, resource, loginHint, resourceMatcherToMatcherSlice(resourceMatcher)...)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			if !roleAllowsAccess {
-				// Role does not allow access to this resource. We will prune it
-				// unless it allows access to another resource.
-				continue
-			}
-			rolesForResource = append(rolesForResource, role)
-		}
-		// If any of the requested resources didn't match with the provided roles,
-		// we deny the request because the user is trying to request more access
-		// than what is allowed by its search_as_roles.
-		if resourceMatcher != nil && len(resourceMatcher.Unmatched()) > 0 {
-			resourcesStr, err := types.ResourceIDsToString(resourceIDs)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			return nil, trace.BadParameter(
-				`no roles configured in the "search_as_roles" for this user allow `+
-					`access to at least one requested resources. `+
-					`resources: %s roles: %v unmatched resources: %v`,
-				resourcesStr, roles, resourceMatcher.Unmatched())
-		}
-		if len(loginHint) > 0 {
-			// If we have a login hint, request the single role with the fewest
-			// allowed logins. All roles at this point have already matched the
-			// requested login and will include it.
-			rolesForResource = fewestLogins(rolesForResource)
-		}
-		for _, role := range rolesForResource {
-			necessaryRoles[role.GetName()] = struct{}{}
-		}
-	}
 
 	if len(necessaryRoles) == 0 {
 		resourcesStr, err := types.ResourceIDsToString(resourceIDs)
@@ -2057,15 +1999,6 @@ func GetResourceIDsByCluster(r types.AccessRequest) map[string][]types.ResourceI
 // TODO(atburke): Remove this once teleport.e reference is switched over
 func GetResourcesByResourceIDs(ctx context.Context, lister client.ListResourcesClient, resourceIDs []types.ResourceID, opts ...accessrequest.ListResourcesRequestOption) ([]types.ResourceWithLabels, error) {
 	return accessrequest.GetResourcesByResourceIDs(ctx, lister, resourceIDs, opts...)
-}
-
-// resourceMatcherToMatcherSlice returns the resourceMatcher in a RoleMatcher slice
-// if the resourceMatcher is not nil, otherwise returns a nil slice.
-func resourceMatcherToMatcherSlice(resourceMatcher *KubeResourcesMatcher) []RoleMatcher {
-	if resourceMatcher == nil {
-		return nil
-	}
-	return []RoleMatcher{resourceMatcher}
 }
 
 // getUnderlyingResourcesByResourceIDs gets the underlying resources the user

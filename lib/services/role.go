@@ -25,7 +25,6 @@ import (
 	"log/slog"
 	"net"
 	"path"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -65,13 +64,7 @@ var DefaultImplicitRules = []types.Rule{
 	types.NewRule(types.KindSSHSession, RO()),
 	types.NewRule(types.KindAppServer, RO()),
 	types.NewRule(types.KindRemoteCluster, RO()),
-	types.NewRule(types.KindKubeServer, RO()),
-	types.NewRule(types.KindDatabaseServer, RO()),
-	types.NewRule(types.KindDatabase, RO()),
 	types.NewRule(types.KindApp, RO()),
-	types.NewRule(types.KindWindowsDesktopService, RO()),
-	types.NewRule(types.KindWindowsDesktop, RO()),
-	types.NewRule(types.KindKubernetesCluster, RO()),
 	types.NewRule(types.KindUsageEvent, []string{types.VerbCreate}),
 	types.NewRule(types.KindVnetConfig, RO()),
 }
@@ -177,7 +170,6 @@ func RoleForUser(u types.User) types.Role {
 				types.NewRule(types.KindLock, RW()),
 				types.NewRule(types.KindToken, RW()),
 				types.NewRule(types.KindConnectionDiagnostic, RW()),
-				types.NewRule(types.KindKubernetesCluster, RW()),
 				types.NewRule(types.KindSessionTracker, RO()),
 				types.NewRule(types.KindUserGroup, RW()),
 				types.NewRule(types.KindSAMLIdPServiceProvider, RW()),
@@ -396,42 +388,6 @@ func filterInvalidUnixLogins(candidates []string) []string {
 	return output
 }
 
-func filterInvalidWindowsLogins(candidates []string) []string {
-	var output []string
-
-	// https://docs.microsoft.com/en-us/previous-versions/windows/it-pro/windows-2000-server/bb726984(v=technet.10)
-	const invalidChars = `"/\[]:;|=,+*?<>`
-
-	for _, candidate := range candidates {
-		if strings.ContainsAny(candidate, invalidChars) {
-			slog.DebugContext(context.Background(), "Skipping invalid Windows login.", "login", candidate)
-			continue
-		}
-
-		output = append(output, candidate)
-	}
-
-	return output
-}
-
-func warnInvalidAzureIdentities(candidates []string) {
-	for _, candidate := range candidates {
-		if !MatchValidAzureIdentity(candidate) {
-			slog.WarnContext(context.Background(), "Invalid format of Azure identity", "identity", candidate)
-		}
-	}
-}
-
-// ParseResourceID from Azure SDK is too lenient; we use a strict regexp instead.
-var azureIdentityPattern = regexp.MustCompile(`(?i)^/subscriptions/([a-fA-F0-9-]+)/resourceGroups/([0-9a-zA-Z-_]+)/providers/Microsoft\.ManagedIdentity/userAssignedIdentities/([0-9a-zA-Z-_]+)$`)
-
-func MatchValidAzureIdentity(identity string) bool {
-	if identity == types.Wildcard {
-		return true
-	}
-
-	return azureIdentityPattern.MatchString(identity)
-}
 
 // ApplyTraits applies the passed in traits to any variables within the role
 // and returns itself.
@@ -445,7 +401,6 @@ func ApplyTraits(r types.Role, traits map[string][]string) (types.Role, error) {
 
 		inWindowsLogins := r.GetWindowsLogins(condition)
 		outWindowsLogins := applyValueTraitsSlice(inWindowsLogins, traits, "windows_login")
-		outWindowsLogins = filterInvalidWindowsLogins(outWindowsLogins)
 		r.SetWindowsLogins(condition, apiutils.Deduplicate(outWindowsLogins))
 
 		inRoleARNs := r.GetAWSRoleARNs(condition)
@@ -454,7 +409,6 @@ func ApplyTraits(r types.Role, traits map[string][]string) (types.Role, error) {
 
 		inAzureIdentities := r.GetAzureIdentities(condition)
 		outAzureIdentities := applyValueTraitsSlice(inAzureIdentities, traits, "Azure identity")
-		warnInvalidAzureIdentities(outAzureIdentities)
 		r.SetAzureIdentities(condition, apiutils.Deduplicate(outAzureIdentities))
 
 		inGCPAccounts := r.GetGCPServiceAccounts(condition)
@@ -1021,70 +975,6 @@ func MatchNamespace(selectors []string, namespace string) (bool, string) {
 	return false, fmt.Sprintf("no match, role selectors %v, server namespace: %v", selectors, namespace)
 }
 
-// MatchAWSRoleARN returns true if provided role ARN matches selectors.
-func MatchAWSRoleARN(selectors []string, roleARN string) (bool, string) {
-	for _, l := range selectors {
-		if l == roleARN {
-			return true, "matched"
-		}
-	}
-	return false, fmt.Sprintf("no match, role selectors %v, role ARN: %v", selectors, roleARN)
-}
-
-// MatchAzureIdentity returns true if provided Azure identity matches selectors.
-func MatchAzureIdentity(selectors []string, identity string, matchWildcard bool) (bool, string) {
-	identity = strings.ToLower(identity)
-	for _, l := range selectors {
-		if strings.ToLower(l) == identity {
-			return true, "element matched"
-		}
-		if matchWildcard && l == types.Wildcard {
-			return true, "wildcard matched"
-		}
-	}
-	return false, fmt.Sprintf("no match, role selectors %v, identity: %v", selectors, identity)
-}
-
-// MatchGCPServiceAccount returns true if provided GCP service account matches selectors.
-func MatchGCPServiceAccount(selectors []string, account string, matchWildcard bool) (bool, string) {
-	for _, l := range selectors {
-		if l == account {
-			return true, "element matched"
-		}
-		if matchWildcard && l == types.Wildcard {
-			return true, "wildcard matched"
-		}
-	}
-	return false, fmt.Sprintf("no match, role selectors %v, identity: %v", selectors, account)
-}
-
-// MatchDatabaseName returns true if provided database name matches selectors.
-func MatchDatabaseName(selectors []string, name string) (bool, string) {
-	for _, n := range selectors {
-		if n == name || n == types.Wildcard {
-			return true, "matched"
-		}
-	}
-	return false, fmt.Sprintf("no match, role selectors %v, database name: %v", selectors, name)
-}
-
-// MatchDatabaseUser returns true if provided database user matches selectors.
-func MatchDatabaseUser(selectors []string, user string, matchWildcard, caseFold bool) (bool, string) {
-	for _, u := range selectors {
-		if caseFold {
-			if strings.EqualFold(u, user) {
-				return true, "matched"
-			}
-		} else if u == user {
-			return true, "matched"
-		}
-		if matchWildcard && u == types.Wildcard {
-			return true, "matched"
-		}
-	}
-	return false, fmt.Sprintf("no match, role selectors %v, database user: %v", selectors, user)
-}
-
 // MatchLabels matches selector against target. Empty selector matches
 // nothing, wildcard matches everything.
 func MatchLabels(selector types.Labels, target map[string]string) (bool, string, error) {
@@ -1340,188 +1230,6 @@ func (set RoleSet) AdjustDisconnectExpiredCert(disconnect bool) bool {
 	return disconnect
 }
 
-// CheckKubeGroupsAndUsers check if role can login into kubernetes
-// and returns two lists of allowed groups and users
-func (set RoleSet) CheckKubeGroupsAndUsers(ttl time.Duration, overrideTTL bool, matchers ...RoleMatcher) ([]string, []string, error) {
-	groups := make(map[string]struct{})
-	users := make(map[string]struct{})
-	var matchedTTL bool
-	for _, role := range set {
-		ok, err := RoleMatchers(matchers).MatchAll(role, types.Allow)
-		if err != nil {
-			return nil, nil, trace.Wrap(err)
-		}
-		if !ok {
-			continue
-		}
-
-		maxSessionTTL := role.GetOptions().MaxSessionTTL.Value()
-		if overrideTTL || (ttl <= maxSessionTTL && maxSessionTTL != 0) {
-			matchedTTL = true
-			for _, group := range role.GetKubeGroups(types.Allow) {
-				groups[group] = struct{}{}
-			}
-			for _, user := range role.GetKubeUsers(types.Allow) {
-				users[user] = struct{}{}
-			}
-		}
-	}
-	for _, role := range set {
-		ok, _, err := RoleMatchers(matchers).MatchAny(role, types.Deny)
-		if err != nil {
-			return nil, nil, trace.Wrap(err)
-		}
-		if !ok {
-			continue
-		}
-		for _, group := range role.GetKubeGroups(types.Deny) {
-			delete(groups, group)
-		}
-		for _, user := range role.GetKubeUsers(types.Deny) {
-			delete(users, user)
-		}
-	}
-	if !matchedTTL {
-		return nil, nil, trace.AccessDenied("this user cannot request kubernetes access for %v", ttl)
-	}
-	if len(groups) == 0 && len(users) == 0 {
-		return nil, nil, trace.NotFound("this user cannot request kubernetes access, has no assigned groups or users")
-	}
-	return utils.StringsSliceFromSet(groups), utils.StringsSliceFromSet(users), nil
-}
-
-// CheckDatabaseNamesAndUsers checks if the role has any allowed database
-// names or users.
-func (set RoleSet) CheckDatabaseNamesAndUsers(ttl time.Duration, overrideTTL bool) ([]string, []string, error) {
-	names := make(map[string]struct{})
-	users := make(map[string]struct{})
-	var matchedTTL bool
-	for _, role := range set {
-		maxSessionTTL := role.GetOptions().MaxSessionTTL.Value()
-		if overrideTTL || (ttl <= maxSessionTTL && maxSessionTTL != 0) {
-			matchedTTL = true
-			for _, name := range role.GetDatabaseNames(types.Allow) {
-				names[name] = struct{}{}
-			}
-			for _, user := range role.GetDatabaseUsers(types.Allow) {
-				users[user] = struct{}{}
-			}
-		}
-	}
-	for _, role := range set {
-		for _, name := range role.GetDatabaseNames(types.Deny) {
-			delete(names, name)
-		}
-		for _, user := range role.GetDatabaseUsers(types.Deny) {
-			delete(users, user)
-		}
-	}
-	if !matchedTTL {
-		return nil, nil, trace.AccessDenied("this user cannot request database access for %v", ttl)
-	}
-	if len(names) == 0 && len(users) == 0 {
-		return nil, nil, trace.NotFound("this user cannot request database access, has no assigned database names or users")
-	}
-	return utils.StringsSliceFromSet(names), utils.StringsSliceFromSet(users), nil
-}
-
-// CheckAWSRoleARNs returns a list of AWS role ARNs this role set is allowed to assume.
-func (set RoleSet) CheckAWSRoleARNs(ttl time.Duration, overrideTTL bool) ([]string, error) {
-	arns := make(map[string]struct{})
-	var matchedTTL bool
-	for _, role := range set {
-		maxSessionTTL := role.GetOptions().MaxSessionTTL.Value()
-		if overrideTTL || (ttl <= maxSessionTTL && maxSessionTTL != 0) {
-			matchedTTL = true
-			for _, arn := range role.GetAWSRoleARNs(types.Allow) {
-				arns[arn] = struct{}{}
-			}
-		}
-	}
-	for _, role := range set {
-		for _, arn := range role.GetAWSRoleARNs(types.Deny) {
-			delete(arns, arn)
-		}
-	}
-	if !matchedTTL {
-		return nil, trace.AccessDenied("this user cannot request AWS management console access for %v", ttl)
-	}
-	if len(arns) == 0 {
-		return nil, trace.NotFound("this user cannot request AWS management console, has no assigned role ARNs")
-	}
-	return utils.StringsSliceFromSet(arns), nil
-}
-
-// CheckAzureIdentities returns a list of Azure identities the user is allowed to assume.
-func (set RoleSet) CheckAzureIdentities(ttl time.Duration, overrideTTL bool) ([]string, error) {
-	identities := make(map[string]string)
-	var matchedTTL bool
-	for _, role := range set {
-		maxSessionTTL := role.GetOptions().MaxSessionTTL.Value()
-		if overrideTTL || (ttl <= maxSessionTTL && maxSessionTTL != 0) {
-			matchedTTL = true
-			for _, identity := range role.GetAzureIdentities(types.Allow) {
-				identities[strings.ToLower(identity)] = identity
-			}
-		}
-	}
-	for _, role := range set {
-		for _, identity := range role.GetAzureIdentities(types.Deny) {
-			// deny * cleans options
-			if identity == types.Wildcard {
-				identities = make(map[string]string)
-			}
-			// remove particular identity
-			delete(identities, strings.ToLower(identity))
-		}
-	}
-	if !matchedTTL {
-		return nil, trace.AccessDenied("this user cannot access Azure API for %v", ttl)
-	}
-	if len(identities) == 0 {
-		return nil, trace.NotFound("this user cannot access Azure API, has no assigned identities")
-	}
-
-	out := make([]string, 0, len(identities))
-	for _, identity := range identities {
-		out = append(out, identity)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// CheckGCPServiceAccounts returns a list of GCP service accounts this role set is allowed to assume.
-func (set RoleSet) CheckGCPServiceAccounts(ttl time.Duration, overrideTTL bool) ([]string, error) {
-	accounts := make(map[string]struct{})
-	var matchedTTL bool
-	for _, role := range set {
-		maxSessionTTL := role.GetOptions().MaxSessionTTL.Value()
-		if overrideTTL || (ttl <= maxSessionTTL && maxSessionTTL != 0) {
-			matchedTTL = true
-			for _, account := range role.GetGCPServiceAccounts(types.Allow) {
-				accounts[strings.ToLower(account)] = struct{}{}
-			}
-		}
-	}
-	for _, role := range set {
-		for _, account := range role.GetGCPServiceAccounts(types.Deny) {
-			// deny * removes all accounts
-			if account == types.Wildcard {
-				accounts = make(map[string]struct{})
-			}
-			// remove particular account
-			delete(accounts, strings.ToLower(account))
-		}
-	}
-	if !matchedTTL {
-		return nil, trace.AccessDenied("this user cannot request GCP API access for %v", ttl)
-	}
-	if len(accounts) == 0 {
-		return nil, trace.NotFound("this user cannot request GCP API access, has no assigned service accounts")
-	}
-	return utils.StringsSliceFromSet(accounts), nil
-}
-
 // CheckAccessToSAMLIdP checks access to the SAML IdP.
 //
 // TODO(Joerger): make Access state non-variadic once /e is updated to provide it.
@@ -1626,55 +1334,6 @@ func (set RoleSet) hasPossibleLogins() bool {
 	return false
 }
 
-// AWSRoleARNMatcher matches a role against AWS role ARN.
-type AWSRoleARNMatcher struct {
-	RoleARN string
-}
-
-// Match matches AWS role ARN against provided role and condition.
-func (m *AWSRoleARNMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	match, _ := MatchAWSRoleARN(role.GetAWSRoleARNs(condition), m.RoleARN)
-	return match, nil
-}
-
-// String returns the matcher's string representation.
-func (m *AWSRoleARNMatcher) String() string {
-	return fmt.Sprintf("AWSRoleARNMatcher(RoleARN=%v)", m.RoleARN)
-}
-
-// AzureIdentityMatcher matches a role against Azure identity.
-type AzureIdentityMatcher struct {
-	Identity string
-}
-
-// Match matches Azure identity against provided role and condition.
-func (m *AzureIdentityMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	match, _ := MatchAzureIdentity(role.GetAzureIdentities(condition), m.Identity, condition == types.Deny)
-	return match, nil
-}
-
-// String returns the matcher's string representation.
-func (m *AzureIdentityMatcher) String() string {
-	return fmt.Sprintf("AzureIdentityMatcher(Identity=%v)", m.Identity)
-}
-
-// GCPServiceAccountMatcher matches a role against GCP service account.
-type GCPServiceAccountMatcher struct {
-	// ServiceAccount is a GCP service account to match, e.g. teleport@example-123456.iam.gserviceaccount.com.
-	// It can also be a wildcard *, but that is only respected for Deny rules.
-	ServiceAccount string
-}
-
-// Match matches GCP ServiceAccount against provided role and condition.
-func (m *GCPServiceAccountMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	match, _ := MatchGCPServiceAccount(role.GetGCPServiceAccounts(condition), m.ServiceAccount, condition == types.Deny)
-	return match, nil
-}
-
-// String returns the matcher's string representation.
-func (m *GCPServiceAccountMatcher) String() string {
-	return fmt.Sprintf("GCPServiceAccountMatcher(ServiceAccount=%v)", m.ServiceAccount)
-}
 
 // CanImpersonateSomeone returns true if this checker has any impersonation rules
 func (set RoleSet) CanImpersonateSomeone() bool {
@@ -2143,62 +1802,6 @@ func (m RoleMatchers) MatchAny(role types.Role, condition types.RoleConditionTyp
 	return false, nil, nil
 }
 
-// databaseUserMatcher matches a role against database account name.
-type databaseUserMatcher struct {
-	// user is the name of the database user.
-	user string
-	// alternativeNames is a list of alternative names for the database user.
-	alternativeNames []string
-	// caseInsensitive specifies if the username is case insensitive.
-	caseInsensitive bool
-}
-
-// NewDatabaseUserMatcher creates a RoleMatcher that checks whether the role's
-// database users match the specified condition.
-func NewDatabaseUserMatcher(db types.Database, user string) RoleMatcher {
-	return &databaseUserMatcher{
-		user:            user,
-		caseInsensitive: db.IsUsernameCaseInsensitive(),
-	}
-}
-
-// Match matches database account name against provided role and condition.
-func (m *databaseUserMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	selectors := role.GetDatabaseUsers(condition)
-
-	if match, _ := MatchDatabaseUser(selectors, m.user, true /*matchWildcard*/, m.caseInsensitive); match {
-		return true, nil
-	}
-
-	for _, altName := range m.alternativeNames {
-		if match, _ := MatchDatabaseUser(selectors, altName, false /*matchWildcard*/, m.caseInsensitive); match {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// String returns the matcher's string representation.
-func (m *databaseUserMatcher) String() string {
-	return fmt.Sprintf("databaseUserMatcher(user=%v, alternativeNames=%v)", m.user, m.alternativeNames)
-}
-
-// DatabaseNameMatcher matches a role against database name.
-type DatabaseNameMatcher struct {
-	Name string
-}
-
-// Match matches database name against provided role and condition.
-func (m *DatabaseNameMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	match, _ := MatchDatabaseName(role.GetDatabaseNames(condition), m.Name)
-	return match, nil
-}
-
-// String returns the matcher's string representation.
-func (m *DatabaseNameMatcher) String() string {
-	return fmt.Sprintf("DatabaseNameMatcher(Name=%v)", m.Name)
-}
-
 type loginMatcher struct {
 	login string
 }
@@ -2220,183 +1823,12 @@ func (l *loginMatcher) Match(role types.Role, typ types.RoleConditionType) (bool
 	return false, nil
 }
 
-type windowsLoginMatcher struct {
-	login string
-}
-
-// NewWindowsLoginMatcher creates a RoleMatcher that checks whether the role's
-// Windows desktop logins match the specified condition.
-func NewWindowsLoginMatcher(login string) RoleMatcher {
-	return &windowsLoginMatcher{login: login}
-}
-
-// Match matches a Windows Desktop login against a role.
-func (l *windowsLoginMatcher) Match(role types.Role, typ types.RoleConditionType) (bool, error) {
-	logins := role.GetWindowsLogins(typ)
-	for _, login := range logins {
-		if l.login == login {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-type awsAppLoginMatcher struct {
-	awsRole string
-}
-
-// NewAppAWSLoginMatcher creates a RoleMatcher that checks whether the role's
-// AWS Role ARN match the specified condition.
-func NewAppAWSLoginMatcher(awsRole string) RoleMatcher {
-	return &awsAppLoginMatcher{awsRole: awsRole}
-}
-
-// Match matches an AWS Role ARN login against a role.
-func (l *awsAppLoginMatcher) Match(role types.Role, typ types.RoleConditionType) (bool, error) {
-	awsRoles := role.GetAWSRoleARNs(typ)
-	for _, awsRole := range awsRoles {
-		if l.awsRole == awsRole {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-type kubernetesClusterLabelMatcher struct {
-	clusterLabels map[string]string
-	userTraits    wrappers.Traits
-}
-
-// NewKubeResourcesMatcher creates a new KubeResourcesMatcher matcher that
-// matches a role against any Kubernetes Resource specified.
-// It also keeps track of the resources that did not match any of user's roles and
-// that shouldn't be included in the resource ids because the user is not allowed
-// to request them.
-func NewKubeResourcesMatcher(resources []types.KubernetesResource) *KubeResourcesMatcher {
-	matcher := &KubeResourcesMatcher{
-		resources:     resources,
-		unmatchedReqs: map[string]struct{}{},
-	}
-	for _, r := range resources {
-		matcher.unmatchedReqs[unmatchedKey(r)] = struct{}{}
-	}
-	return matcher
-}
 
 // unmatchedKey returns a unique key for a Kubernetes resource.
 // It is used to keep track of the resources that did not match any of user's roles.
 // Format: <kind>/<namespace>/<name>
 func unmatchedKey(r types.KubernetesResource) string {
 	return path.Join(r.Kind, r.ClusterResource())
-}
-
-// KubeResourcesMatcher matches a role against any Kubernetes Resource specified.
-// It also keeps track of the resources that did not match any of user's roles and
-// that shouldn't be included in the resource ids because the user is not allowed
-// to request them.
-type KubeResourcesMatcher struct {
-	resources     []types.KubernetesResource
-	unmatchedReqs map[string]struct{}
-}
-
-// Match matches a Kubernetes resource against provided role and condition.
-func (m *KubeResourcesMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	var finalResult bool
-	for _, resource := range m.resources {
-		// We use utils.KubeResourceMatchesRegexWithVerbsCollector instead of utils.KubeResourceMatchesRegex
-		// because KubeResourcesMatcher is used to match access request resources at creation time against
-		// the roles specified in the `search_as_roles` field. This means that we don't have the request verb
-		// at this point and we need to match the resource against all the verbs specified in the role.
-		// If the resource matches any of the verbs, we consider the resource as matched.
-		// Verbs are enforced at the request time when the user is trying to access the Kubernetes Pod.
-		result, _, err := utils.KubeResourceMatchesRegexWithVerbsCollector(resource, role.GetKubeResources(condition))
-		if err != nil {
-			return false, trace.Wrap(err)
-		}
-
-		if result {
-			delete(m.unmatchedReqs, unmatchedKey(resource))
-			finalResult = true
-		}
-	}
-	return finalResult, nil
-}
-
-// String returns the matcher's string representation.
-func (m *KubeResourcesMatcher) String() string {
-	return fmt.Sprintf("KubeResourcesMatcher(Resources=%v)", m.resources)
-}
-
-// Unmatched returns the Kubernetes Resource request access that that didn't
-// match with any `search_as_roles` kubernetes resources.
-func (m *KubeResourcesMatcher) Unmatched() []string {
-	unmatched := make([]string, 0, len(m.unmatchedReqs))
-	for k := range m.unmatchedReqs {
-		unmatched = append(unmatched, k)
-	}
-	return unmatched
-}
-
-// KubernetesResourceMatcher matches a role against a Kubernetes Resource.
-// Kind is must be stricly equal but namespace and name allow wildcards.
-type KubernetesResourceMatcher struct {
-	resource types.KubernetesResource
-}
-
-// NewKubernetesResourceMatcher creates a KubernetesResourceMatcher that checks
-// whether the role's KubeResources match the specified condition.
-func NewKubernetesResourceMatcher(resource types.KubernetesResource) *KubernetesResourceMatcher {
-	return &KubernetesResourceMatcher{
-		resource: resource,
-	}
-}
-
-// Match matches a Kubernetes Resource against provided role and condition.
-func (m *KubernetesResourceMatcher) Match(role types.Role, condition types.RoleConditionType) (bool, error) {
-	result, err := utils.KubeResourceMatchesRegex(m.resource, role.GetKubeResources(condition))
-
-	return result, trace.Wrap(err)
-}
-
-// String returns the matcher's string representation.
-func (m *KubernetesResourceMatcher) String() string {
-	return fmt.Sprintf("KubernetesResourceMatcher(Resource=%v)", m.resource)
-}
-
-// NewKubernetesClusterLabelMatcher creates a RoleMatcher that checks whether a role's
-// Kubernetes service labels match.
-func NewKubernetesClusterLabelMatcher(clustersLabels map[string]string, userTraits wrappers.Traits) RoleMatcher {
-	return &kubernetesClusterLabelMatcher{clusterLabels: clustersLabels, userTraits: userTraits}
-}
-
-// Match matches a Kubernetes cluster labels against a role.
-func (l *kubernetesClusterLabelMatcher) Match(role types.Role, typ types.RoleConditionType) (bool, error) {
-	labelMatchers, err := l.getKubeLabelMatchers(role, typ)
-	if err != nil {
-		return false, trace.Wrap(err)
-	}
-	ok, _, err := checkLabelsMatch(typ, labelMatchers, l.userTraits, mapLabelGetter(l.clusterLabels), false)
-	return ok, trace.Wrap(err)
-}
-
-// getKubeLabelMatchers returns kubernetes_labels based on resource version and role type.
-func (l kubernetesClusterLabelMatcher) getKubeLabelMatchers(role types.Role, typ types.RoleConditionType) (types.LabelMatchers, error) {
-	labelMatchers, err := role.GetLabelMatchers(typ, types.KindKubernetesCluster)
-	if err != nil {
-		return types.LabelMatchers{}, trace.Wrap(err)
-	}
-
-	// After the introduction of https://github.com/gravitational/teleport/pull/9759 the
-	// kubernetes_labels started to be respected. Former role behavior evaluated deny rules
-	// even if the kubernetes_labels was empty. To preserve this behavior after respecting kubernetes label the label
-	// logic needs to be aligned.
-	// Default wildcard rules should be added to  deny.kubernetes_labels if
-	// deny.kubernetes_labels is empty to ensure that deny rule will be evaluated
-	// even if kubernetes_labels are empty.
-	if labelMatchers.Empty() && typ == types.Deny {
-		labelMatchers.Labels = types.Labels{types.Wildcard: []string{types.Wildcard}}
-	}
-	return labelMatchers, nil
 }
 
 // AccessCheckable is the subset of types.Resource required for the RBAC checks.

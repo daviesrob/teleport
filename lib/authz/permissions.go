@@ -722,13 +722,6 @@ func (a *authorizer) authorizeRemoteUser(ctx context.Context, u RemoteUser) (*Co
 		previousIdentityExpires = time.Now().Add(prevIdentityTTL)
 	}
 
-	kubeUsers, kubeGroups, err := checker.CheckKubeGroupsAndUsers(ttl, false)
-	// IsNotFound means that the user has no k8s users or groups, which is fine
-	// in many cases. The downstream k8s handler will ensure that users/groups
-	// are set if this is a k8s request.
-	if err != nil && !trace.IsNotFound(err) {
-		return nil, trace.Wrap(err)
-	}
 	principals, err := checker.CheckLoginDuration(ttl)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -742,8 +735,6 @@ func (a *authorizer) authorizeRemoteUser(ctx context.Context, u RemoteUser) (*Co
 		Groups:                  user.GetRoles(),
 		Traits:                  accessInfo.Traits,
 		Principals:              principals,
-		KubernetesGroups:        kubeGroups,
-		KubernetesUsers:         kubeUsers,
 		TeleportCluster:         a.clusterName,
 		Expires:                 time.Now().Add(ttl),
 		PreviousIdentityExpires: previousIdentityExpires,

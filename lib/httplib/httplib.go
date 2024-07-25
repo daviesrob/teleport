@@ -36,11 +36,8 @@ import (
 	"github.com/gravitational/trace"
 	"github.com/julienschmidt/httprouter"
 	log "github.com/sirupsen/logrus"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/gravitational/teleport"
-	"github.com/gravitational/teleport/api/observability/tracing"
-	tracehttp "github.com/gravitational/teleport/api/observability/tracing/http"
 	"github.com/gravitational/teleport/lib/httplib/csrf"
 	"github.com/gravitational/teleport/lib/utils"
 )
@@ -79,40 +76,6 @@ func MakeSecurityHeaderHandler(h http.Handler) http.Handler {
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(handler)
-}
-
-// MakeTracingHandler returns a new httprouter.Handle func that wraps the provided handler func
-// with one that will add a tracing span for each request.
-func MakeTracingHandler(h http.Handler, component string) http.Handler {
-	// Wrap the provided handler with one that will inject
-	// any propagated tracing context provided via a query parameter
-	// if there isn't already a header containing tracing context.
-	// This is required for scenarios using web sockets as headers
-	// cannot be modified to inject the tracing context.
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		// ensure headers have priority over query parameters
-		if r.Header.Get(tracing.TraceParent) != "" {
-			h.ServeHTTP(w, r)
-			return
-		}
-
-		traceParent := r.URL.Query()[tracing.TraceParent]
-		if len(traceParent) > 0 {
-			r.Header.Add(tracing.TraceParent, traceParent[0])
-		}
-
-		h.ServeHTTP(w, r)
-	}
-
-	return otelhttp.NewHandler(http.HandlerFunc(handler), component, otelhttp.WithSpanNameFormatter(tracehttp.HandlerFormatter))
-}
-
-// MakeTracingMiddleware returns an HTTP middleware that makes tracing
-// handlers.
-func MakeTracingMiddleware(component string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return MakeTracingHandler(next, component)
-	}
 }
 
 // MakeHandlerWithErrorWriter returns a httprouter.Handle from the HandlerFunc,

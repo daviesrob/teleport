@@ -40,7 +40,6 @@ import (
 
 	"github.com/gravitational/teleport/api/constants"
 	"github.com/gravitational/teleport/api/defaults"
-	"github.com/gravitational/teleport/api/observability/tracing"
 	tracehttp "github.com/gravitational/teleport/api/observability/tracing/http"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/utils"
@@ -66,8 +65,6 @@ type Config struct {
 	ExtraHeaders map[string]string
 	// Timeout is a timeout for requests.
 	Timeout time.Duration
-	// TraceProvider is used to retrieve a Tracer for creating spans
-	TraceProvider oteltrace.TracerProvider
 }
 
 // CheckAndSetDefaults checks and sets defaults
@@ -81,9 +78,6 @@ func (c *Config) CheckAndSetDefaults() error {
 	}
 	if c.Timeout == 0 {
 		c.Timeout = defaults.DefaultIOTimeout
-	}
-	if c.TraceProvider == nil {
-		c.TraceProvider = tracing.DefaultProvider()
 	}
 	return nil
 }
@@ -166,8 +160,7 @@ func Find(cfg *Config) (*PingResponse, error) {
 	}
 	defer clt.CloseIdleConnections()
 
-	ctx, span := cfg.TraceProvider.Tracer("webclient").Start(cfg.Context, "webclient/Find")
-	defer span.End()
+	ctx := cfg.Context
 
 	endpoint := fmt.Sprintf("https://%s/webapi/find", cfg.ProxyAddr)
 
@@ -202,8 +195,7 @@ func Ping(cfg *Config) (*PingResponse, error) {
 	}
 	defer clt.CloseIdleConnections()
 
-	ctx, span := cfg.TraceProvider.Tracer("webclient").Start(cfg.Context, "webclient/Ping")
-	defer span.End()
+	ctx := cfg.Context
 
 	endpoint := fmt.Sprintf("https://%s/webapi/ping", cfg.ProxyAddr)
 	if cfg.ConnectorName != "" {
@@ -253,8 +245,7 @@ func GetMOTD(cfg *Config) (*MotD, error) {
 	}
 	defer clt.CloseIdleConnections()
 
-	ctx, span := cfg.TraceProvider.Tracer("webclient").Start(cfg.Context, "webclient/GetMOTD")
-	defer span.End()
+	ctx := cfg.Context
 
 	endpoint := fmt.Sprintf("https://%s/webapi/motd", cfg.ProxyAddr)
 

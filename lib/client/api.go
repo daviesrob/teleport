@@ -1699,16 +1699,6 @@ func (tc *TeleportClient) SSH(ctx context.Context, command []string, opts ...fun
 // be returned. The client from whichever attempt succeeds first will be returned.
 func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient, nodeDetails NodeDetails, user string) (_ *NodeClient, err error) {
 	node := nodeName(targetNode{addr: nodeDetails.Addr})
-	ctx, span := tc.Tracer.Start(
-		ctx,
-		"teleportClient/ConnectToNode",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("cluster", nodeDetails.Cluster),
-			attribute.String("node", node),
-		),
-	)
-	defer func() { apitracing.EndSpan(span, err) }()
 
 	// if per-session mfa is required, perform the mfa ceremony to get
 	// new certificates and use them to connect.
@@ -2875,16 +2865,6 @@ func formatConnectToProxyErr(err error) error {
 // ConnectToCluster will dial the auth and proxy server and return a ClusterClient when
 // successful.
 func (tc *TeleportClient) ConnectToCluster(ctx context.Context) (_ *ClusterClient, err error) {
-	ctx, span := tc.Tracer.Start(
-		ctx,
-		"teleportClient/ConnectToCluster",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("proxy_web", tc.Config.WebProxyAddr),
-			attribute.String("proxy_ssh", tc.Config.SSHProxyAddr),
-		),
-	)
-	defer func() { apitracing.EndSpan(span, err) }()
 
 	cfg, err := tc.generateClientConfig(ctx)
 	if err != nil {

@@ -25,10 +25,8 @@ import (
 
 	"github.com/gravitational/trace"
 	log "github.com/sirupsen/logrus"
-	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/gravitational/teleport/api/client/proto"
-	"github.com/gravitational/teleport/api/observability/tracing"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
 )
 
@@ -123,12 +121,6 @@ func Login(
 	ctx context.Context,
 	origin string, assertion *wantypes.CredentialAssertion, prompt LoginPrompt, opts *LoginOpts,
 ) (*proto.MFAAuthenticateResponse, string, error) {
-	ctx, span := tracing.NewTracer("mfa").Start(
-		ctx,
-		"webauthncli/Login",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
 
 	// origin vs RPID sanity check.
 	// Doesn't necessarily means a failure, but it's likely to be one.

@@ -16,11 +16,7 @@ package ssh
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
-	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gravitational/teleport/api/observability/tracing"
@@ -45,57 +41,8 @@ func NewTraceChannel(ch ssh.Channel, opts ...tracing.Option) *Channel {
 // reply. If tracing is enabled, the provided payload
 // is wrapped in an Envelope to forward any tracing context.
 func (c *Channel) SendRequest(ctx context.Context, name string, wantReply bool, payload []byte) (_ bool, err error) {
-	config := tracing.NewConfig(c.opts)
-	tracer := config.TracerProvider.Tracer(instrumentationName)
-
-	ctx, span := tracer.Start(
-		ctx,
-		fmt.Sprintf("ssh.ChannelRequest/%s", name),
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			semconv.RPCServiceKey.String("ssh.Channel"),
-			semconv.RPCMethodKey.String("SendRequest"),
-			semconv.RPCSystemKey.String("ssh"),
-		),
-	)
-	defer func() { tracing.EndSpan(span, err) }()
-
 	return c.Channel.SendRequest(
-		name, wantReply, wrapPayload(ctx, c.tracingSupported, config.TextMapPropagator, payload),
+		name, wantReply, payload,
 	)
 }
 
-// NewChannel is a wrapper around ssh.NewChannel that allows an
-// Envelope to be provided to new channels.
-type NewChannel struct {
-	ssh.NewChannel
-	Envelope Envelope
-}
-
-// NewTraceNewChannel wraps the ssh.NewChannel in a new NewChannel
-//
-// The provided ssh.NewChannel will have any Envelope provided
-// via ExtraData extracted so that the original payload can be
-// provided to callers of NewCh.ExtraData.
-func NewTraceNewChannel(nch ssh.NewChannel) *NewChannel {
-	ch := &NewChannel{
-		NewChannel: nch,
-	}
-
-	data := nch.ExtraData()
-
-	var envelope Envelope
-	if err := json.Unmarshal(data, &envelope); err == nil {
-		ch.Envelope = envelope
-	} else {
-		ch.Envelope.Payload = data
-	}
-
-	return ch
-}
-
-// ExtraData returns the arbitrary payload for this channel, as supplied
-// by the client. This data is specific to the channel type.
-func (n NewChannel) ExtraData() []byte {
-	return n.Envelope.Payload
-}

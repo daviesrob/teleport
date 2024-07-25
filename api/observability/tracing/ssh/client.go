@@ -17,15 +17,11 @@ package ssh
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
 
 	"github.com/gravitational/trace"
-	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gravitational/teleport/api/observability/tracing"
@@ -71,24 +67,6 @@ func NewClient(c ssh.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request
 // DialContext initiates a connection to the addr from the remote host.
 // The resulting connection has a zero LocalAddr() and RemoteAddr().
 func (c *Client) DialContext(ctx context.Context, n, addr string) (net.Conn, error) {
-	tracer := tracing.NewConfig(c.opts).TracerProvider.Tracer(instrumentationName)
-	ctx, span := tracer.Start(
-		ctx,
-		"ssh.DialContext",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			append(
-				peerAttr(c.Conn.RemoteAddr()),
-				attribute.String("network", n),
-				attribute.String("address", addr),
-				semconv.RPCServiceKey.String("ssh.Client"),
-				semconv.RPCMethodKey.String("Dial"),
-				semconv.RPCSystemKey.String("ssh"),
-			)...,
-		),
-	)
-	defer span.End()
-
 	// create the wrapper while the lock is held
 	wrapper := &clientWrapper{
 		capability: c.capability,
@@ -108,27 +86,8 @@ func (c *Client) DialContext(ctx context.Context, n, addr string) (net.Conn, err
 func (c *Client) SendRequest(
 	ctx context.Context, name string, wantReply bool, payload []byte,
 ) (_ bool, _ []byte, err error) {
-	config := tracing.NewConfig(c.opts)
-	tracer := config.TracerProvider.Tracer(instrumentationName)
-
-	ctx, span := tracer.Start(
-		ctx,
-		fmt.Sprintf("ssh.GlobalRequest/%s", name),
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			append(
-				peerAttr(c.Conn.RemoteAddr()),
-				attribute.Bool("want_reply", wantReply),
-				semconv.RPCServiceKey.String("ssh.Client"),
-				semconv.RPCMethodKey.String("SendRequest"),
-				semconv.RPCSystemKey.String("ssh"),
-			)...,
-		),
-	)
-	defer func() { tracing.EndSpan(span, err) }()
-
 	return c.Client.SendRequest(
-		name, wantReply, wrapPayload(ctx, c.capability, config.TextMapPropagator, payload),
+		name, wantReply, payload,
 	)
 }
 
@@ -138,24 +97,7 @@ func (c *Client) SendRequest(
 func (c *Client) OpenChannel(
 	ctx context.Context, name string, data []byte,
 ) (_ *Channel, _ <-chan *ssh.Request, err error) {
-	config := tracing.NewConfig(c.opts)
-	tracer := config.TracerProvider.Tracer(instrumentationName)
-	ctx, span := tracer.Start(
-		ctx,
-		fmt.Sprintf("ssh.OpenChannel/%s", name),
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			append(
-				peerAttr(c.Conn.RemoteAddr()),
-				semconv.RPCServiceKey.String("ssh.Client"),
-				semconv.RPCMethodKey.String("OpenChannel"),
-				semconv.RPCSystemKey.String("ssh"),
-			)...,
-		),
-	)
-	defer func() { tracing.EndSpan(span, err) }()
-
-	ch, reqs, err := c.Client.OpenChannel(name, wrapPayload(ctx, c.capability, config.TextMapPropagator, data))
+	ch, reqs, err := c.Client.OpenChannel(name, data)
 	return &Channel{
 		Channel: ch,
 		opts:    c.opts,
@@ -177,23 +119,6 @@ func (c *Client) NewSessionWithRequestCallback(ctx context.Context, chanReqCallb
 }
 
 func (c *Client) newSession(ctx context.Context, chanReqCallback ChannelRequestCallback) (*Session, error) {
-	tracer := tracing.NewConfig(c.opts).TracerProvider.Tracer(instrumentationName)
-
-	ctx, span := tracer.Start(
-		ctx,
-		"ssh.NewSession",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			append(
-				peerAttr(c.Conn.RemoteAddr()),
-				semconv.RPCServiceKey.String("ssh.Client"),
-				semconv.RPCMethodKey.String("NewSession"),
-				semconv.RPCSystemKey.String("ssh"),
-			)...,
-		),
-	)
-	defer span.End()
-
 	// create the wrapper while the lock is still held
 	wrapper := &clientWrapper{
 		capability: c.capability,
@@ -364,24 +289,7 @@ func (c *clientWrapper) nextContext(name string) context.Context {
 // the provided payload is wrapped in an Envelope to forward
 // any tracing context.
 func (c *clientWrapper) OpenChannel(name string, data []byte) (_ ssh.Channel, _ <-chan *ssh.Request, err error) {
-	config := tracing.NewConfig(c.opts)
-	tracer := config.TracerProvider.Tracer(instrumentationName)
-	ctx, span := tracer.Start(
-		c.ctx,
-		fmt.Sprintf("ssh.OpenChannel/%s", name),
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			append(
-				peerAttr(c.Conn.RemoteAddr()),
-				semconv.RPCServiceKey.String("ssh.Client"),
-				semconv.RPCMethodKey.String("OpenChannel"),
-				semconv.RPCSystemKey.String("ssh"),
-			)...,
-		),
-	)
-	defer func() { tracing.EndSpan(span, err) }()
-
-	ch, reqs, err := c.Conn.OpenChannel(name, wrapPayload(ctx, c.capability, config.TextMapPropagator, data))
+	ch, reqs, err := c.Conn.OpenChannel(name, data)
 	return channelWrapper{
 		Channel: ch,
 		manager: c,
@@ -403,19 +311,5 @@ type channelWrapper struct {
 // called with the appropriate context.Context prior to any
 // requests being sent along the channel.
 func (c channelWrapper) SendRequest(name string, wantReply bool, payload []byte) (_ bool, err error) {
-	config := tracing.NewConfig(c.manager.opts)
-	ctx, span := config.TracerProvider.Tracer(instrumentationName).Start(
-		c.manager.nextContext(name),
-		fmt.Sprintf("ssh.ChannelRequest/%s", name),
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.Bool("want_reply", wantReply),
-			semconv.RPCServiceKey.String("ssh.Channel"),
-			semconv.RPCMethodKey.String("SendRequest"),
-			semconv.RPCSystemKey.String("ssh"),
-		),
-	)
-	defer func() { tracing.EndSpan(span, err) }()
-
-	return c.Channel.SendRequest(name, wantReply, wrapPayload(ctx, c.manager.capability, config.TextMapPropagator, payload))
+	return c.Channel.SendRequest(name, wantReply, payload)
 }

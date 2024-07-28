@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/gravitational/trace"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
@@ -193,13 +192,6 @@ func (ns *NodeSession) NodeClient() *NodeClient {
 }
 
 func (ns *NodeSession) regularSession(ctx context.Context, chanReqCallback tracessh.ChannelRequestCallback, sessionCallback func(s *tracessh.Session) error) error {
-	ctx, span := ns.nodeClient.Tracer.Start(
-		ctx,
-		"nodeClient/regularSession",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	session, err := ns.createServerSession(ctx, chanReqCallback)
 	if err != nil {
 		return trace.Wrap(err)
@@ -213,13 +205,6 @@ func (ns *NodeSession) regularSession(ctx context.Context, chanReqCallback trace
 type interactiveCallback func(serverSession *tracessh.Session, shell io.ReadWriteCloser) error
 
 func (ns *NodeSession) createServerSession(ctx context.Context, chanReqCallback tracessh.ChannelRequestCallback) (*tracessh.Session, error) {
-	ctx, span := ns.nodeClient.Tracer.Start(
-		ctx,
-		"nodeClient/createServerSession",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	sess, err := ns.nodeClient.Client.NewSessionWithRequestCallback(ctx, chanReqCallback)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -289,13 +274,6 @@ func selectKeyAgent(tc *TeleportClient) agent.ExtendedAgent {
 // interactiveSession creates an interactive session on the remote node, executes
 // the given callback on it, and waits for the session to end
 func (ns *NodeSession) interactiveSession(ctx context.Context, mode types.SessionParticipantMode, chanReqCallback tracessh.ChannelRequestCallback, sessionCallback interactiveCallback) error {
-	ctx, span := ns.nodeClient.Tracer.Start(
-		ctx,
-		"nodeClient/interactiveSession",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	// determine what kind of a terminal we need
 	termType := os.Getenv("TERM")
 	if termType == "" {
@@ -548,13 +526,6 @@ func (ns *NodeSession) runShell(ctx context.Context, mode types.SessionParticipa
 // runCommand executes a "exec" request either in interactive mode (with a
 // TTY attached) or non-intractive mode (no TTY).
 func (ns *NodeSession) runCommand(ctx context.Context, mode types.SessionParticipantMode, cmd []string, chanReqCallback tracessh.ChannelRequestCallback, shellCallback ShellCreatedCallback, interactive bool) error {
-	ctx, span := ns.nodeClient.Tracer.Start(
-		ctx,
-		"nodeClient/runCommand",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	// If stdin is not a terminal, refuse to allocate terminal on the server and
 	// fallback to non-interactive mode
 	if interactive && !ns.terminal.IsAttached() {

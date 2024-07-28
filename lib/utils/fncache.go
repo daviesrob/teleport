@@ -26,7 +26,6 @@ import (
 
 	"github.com/gravitational/trace"
 	"github.com/jonboulle/clockwork"
-	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // NOTE: when making changes to this file, run tests with `TEST_FNCACHE_FUZZY=yes` to enable
@@ -277,9 +276,7 @@ func (c *FnCache) get(ctx context.Context, key any, ttl time.Duration, loadfn fu
 		}
 		c.entries[key] = entry
 		go func() {
-			// Link the config context with the span from ctx, if one exists,
-			// so that the loadfn can be traced appropriately.
-			loadCtx := oteltrace.ContextWithSpan(c.cfg.Context, oteltrace.SpanFromContext(ctx))
+			loadCtx := c.cfg.Context
 			entry.v, entry.e = loadfn(loadCtx)
 			entry.t = c.cfg.Clock.Now()
 			close(entry.loaded)

@@ -27,8 +27,6 @@ import (
 
 	"github.com/gravitational/trace"
 	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/gravitational/teleport/api/defaults"
 	apiutils "github.com/gravitational/teleport/api/utils"
@@ -43,18 +41,6 @@ type sitesGetter interface {
 	GetSites() ([]reversetunnelclient.RemoteSite, error)
 }
 
-// NewAuthProxyDialerService create new instance of AuthProxyDialerService.
-func NewAuthProxyDialerService(reverseTunnelServer sitesGetter, localClusterName string, authServers []string, proxySigner multiplexer.PROXYHeaderSigner, log logrus.FieldLogger, tracer oteltrace.Tracer) *AuthProxyDialerService {
-	return &AuthProxyDialerService{
-		reverseTunnelServer: reverseTunnelServer,
-		localClusterName:    localClusterName,
-		authServers:         authServers,
-		proxySigner:         proxySigner,
-		log:                 log,
-		tracer:              tracer,
-	}
-}
-
 // AuthProxyDialerService allows dialing local/remote auth service base on SNI value encoded as destination auth
 // cluster name and ALPN set to teleport-auth protocol.
 type AuthProxyDialerService struct {
@@ -63,7 +49,6 @@ type AuthProxyDialerService struct {
 	authServers         []string
 	proxySigner         multiplexer.PROXYHeaderSigner
 	log                 logrus.FieldLogger
-	tracer              oteltrace.Tracer
 }
 
 func (s *AuthProxyDialerService) HandleConnection(ctx context.Context, conn net.Conn, connInfo alpnproxy.ConnectionInfo) error {
@@ -112,14 +97,6 @@ func (s *AuthProxyDialerService) dialAuthServer(ctx context.Context, clusterName
 }
 
 func (s *AuthProxyDialerService) dialLocalAuthServer(ctx context.Context, clientSrcAddr, clientDstAddr net.Addr) (net.Conn, error) {
-	ctx, span := s.tracer.Start(ctx, "authProxyDialerService/dialLocalAuthServer",
-		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
-		oteltrace.WithAttributes(
-			attribute.String("src_addr", fmt.Sprintf("%v", clientSrcAddr)),
-			attribute.String("dst_addr", fmt.Sprintf("%v", clientDstAddr)),
-			attribute.String("cluster_name", s.localClusterName),
-		))
-	defer span.End()
 
 	if len(s.authServers) == 0 {
 		return nil, trace.NotFound("empty auth servers list")
@@ -154,15 +131,6 @@ func (s *AuthProxyDialerService) dialLocalAuthServer(ctx context.Context, client
 }
 
 func (s *AuthProxyDialerService) dialRemoteAuthServer(ctx context.Context, clusterName string, clientSrcAddr, clientDstAddr net.Addr) (net.Conn, error) {
-	_, span := s.tracer.Start(ctx, "authProxyDialerService/dialRemoteAuthServer",
-		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
-		oteltrace.WithAttributes(
-			attribute.String("src_addr", fmt.Sprintf("%v", clientSrcAddr)),
-			attribute.String("dst_addr", fmt.Sprintf("%v", clientDstAddr)),
-			attribute.String("cluster_name", clusterName),
-		))
-	defer span.End()
-
 	sites, err := s.reverseTunnelServer.GetSites()
 	if err != nil {
 		return nil, trace.Wrap(err)

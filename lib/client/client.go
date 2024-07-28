@@ -35,15 +35,11 @@ import (
 
 	"github.com/gravitational/trace"
 	"github.com/moby/term"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client/proto"
 	apidefaults "github.com/gravitational/teleport/api/defaults"
-	"github.com/gravitational/teleport/api/observability/tracing"
 	tracessh "github.com/gravitational/teleport/api/observability/tracing/ssh"
 	"github.com/gravitational/teleport/api/types"
 	apievents "github.com/gravitational/teleport/api/types/events"
@@ -60,7 +56,6 @@ import (
 // NodeClient can run shell and commands or upload and download files.
 type NodeClient struct {
 	Namespace   string
-	Tracer      oteltrace.Tracer
 	Client      *tracessh.Client
 	TC          *TeleportClient
 	OnMFA       func()
@@ -309,16 +304,6 @@ func WithSSHLogDir(logDir string) NodeClientOption {
 // NewNodeClient constructs a NodeClient that is connected to the node at nodeAddress.
 // The nodeName field is optional and is used only to present better error messages.
 func NewNodeClient(ctx context.Context, sshConfig *ssh.ClientConfig, conn net.Conn, nodeAddress, nodeName string, tc *TeleportClient, fipsEnabled bool, opts ...NodeClientOption) (*NodeClient, error) {
-	ctx, span := tc.Tracer.Start(
-		ctx,
-		"NewNodeClient",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("node", nodeAddress),
-		),
-	)
-	defer span.End()
-
 	if nodeName == "" {
 		nodeName = nodeAddress
 	}
@@ -345,7 +330,6 @@ func NewNodeClient(ctx context.Context, sshConfig *ssh.ClientConfig, conn net.Co
 		Client:          tracessh.NewClient(sshconn, chans, emptyCh),
 		Namespace:       apidefaults.Namespace,
 		TC:              tc,
-		Tracer:          tc.Tracer,
 		FIPSEnabled:     fipsEnabled,
 		ProxyPublicAddr: tc.WebProxyAddr,
 		hostname:        nodeName,
@@ -367,13 +351,6 @@ func NewNodeClient(ctx context.Context, sshConfig *ssh.ClientConfig, conn net.Co
 // to and from the node and local shell. This will block until the interactive shell on the node
 // is terminated.
 func (c *NodeClient) RunInteractiveShell(ctx context.Context, mode types.SessionParticipantMode, sessToJoin types.SessionTracker, chanReqCallback tracessh.ChannelRequestCallback, beforeStart func(io.Writer)) error {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"nodeClient/RunInteractiveShell",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	env := c.TC.newSessionEnv()
 	env[teleport.EnvSSHJoinMode] = string(mode)
 	env[teleport.EnvSSHSessionReason] = c.TC.Config.Reason
@@ -496,13 +473,6 @@ func WithLabeledOutput() RunCommandOption {
 
 // RunCommand executes a given bash command on the node.
 func (c *NodeClient) RunCommand(ctx context.Context, command []string, opts ...RunCommandOption) error {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"nodeClient/RunCommand",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	var options RunCommandOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -631,10 +601,7 @@ func newClientConn(
 
 	respCh := make(chan response, 1)
 	go func() {
-		// Use a noop text map propagator so that the tracing context isn't included in
-		// the connection handshake. Since the provided conn will already include the tracing
-		// context we don't want to send it again.
-		conn, chans, reqs, err := tracessh.NewClientConn(ctx, conn, nodeAddress, config, tracing.WithTextMapPropagator(propagation.NewCompositeTextMapPropagator()))
+		conn, chans, reqs, err := ssh.NewClientConn(conn, nodeAddress, config)
 		respCh <- response{conn, chans, reqs, err}
 	}()
 
@@ -657,13 +624,6 @@ func newClientConn(
 
 // TransferFiles transfers files over SFTP.
 func (c *NodeClient) TransferFiles(ctx context.Context, cfg *sftp.Config) error {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"nodeClient/TransferFiles",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer span.End()
-
 	return trace.Wrap(cfg.TransferFiles(ctx, c.Client.Client))
 }
 
@@ -846,14 +806,6 @@ func (c *NodeClient) remoteListenAndForward(ctx context.Context, ln net.Listener
 
 // GetRemoteTerminalSize fetches the terminal size of a given SSH session.
 func (c *NodeClient) GetRemoteTerminalSize(ctx context.Context, sessionID string) (*term.Winsize, error) {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"nodeClient/GetRemoteTerminalSize",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(attribute.String("session", sessionID)),
-	)
-	defer span.End()
-
 	ok, payload, err := c.Client.SendRequest(ctx, teleport.TerminalSizeRequest, true, []byte(sessionID))
 	if err != nil {
 		return nil, trace.Wrap(err)

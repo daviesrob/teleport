@@ -23,8 +23,6 @@ import (
 	"net"
 
 	"github.com/gravitational/trace"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
@@ -43,7 +41,6 @@ type ClusterClient struct {
 	tc          *TeleportClient
 	ProxyClient *proxyclient.Client
 	AuthClient  authclient.ClientI
-	Tracer      oteltrace.Tracer
 	cluster     string
 	root        string
 }
@@ -146,16 +143,6 @@ func (c ceremonyFailedErr) Error() string {
 
 // ReissueUserCerts generates a new set of certificates for the user.
 func (c *ClusterClient) ReissueUserCerts(ctx context.Context, cachePolicy CertCachePolicy, params ReissueParams) error {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"clusterClient/ReissueUserCerts",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("cluster", c.cluster),
-		),
-	)
-	defer span.End()
-
 	key, err := c.generateUserCerts(ctx, cachePolicy, params)
 	if err != nil {
 		return trace.Wrap(err)
@@ -245,16 +232,6 @@ func (c *ClusterClient) generateUserCerts(ctx context.Context, cachePolicy CertC
 // provided target for the provided user. If per session MFA is required to establish the
 // connection, then the MFA ceremony will be performed.
 func (c *ClusterClient) SessionSSHConfig(ctx context.Context, user string, target NodeDetails) (*ssh.ClientConfig, error) {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"clusterClient/SessionSSHConfig",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("cluster", c.tc.SiteName),
-		),
-	)
-	defer span.End()
-
 	sshConfig := c.ProxyClient.SSHConfig(user)
 
 	if target.MFACheck != nil && !target.MFACheck.Required {
@@ -289,7 +266,6 @@ func (c *ClusterClient) SessionSSHConfig(ctx context.Context, user string, targe
 			tc:          c.tc,
 			ProxyClient: c.ProxyClient,
 			AuthClient:  authClient,
-			Tracer:      c.Tracer,
 			cluster:     rootClusterName,
 			root:        rootClusterName,
 		}
@@ -388,16 +364,6 @@ func (c *ClusterClient) performMFACeremony(ctx context.Context, rootClient *Clus
 // IssueUserCertsWithMFA generates a single-use certificate for the user. If MFA is required
 // to access the resource the provided [mfa.Prompt] will be used to perform the MFA ceremony.
 func (c *ClusterClient) IssueUserCertsWithMFA(ctx context.Context, params ReissueParams, mfaPrompt mfa.Prompt) (*Key, proto.MFARequired, error) {
-	ctx, span := c.Tracer.Start(
-		ctx,
-		"ClusterClient/IssueUserCertsWithMFA",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-		oteltrace.WithAttributes(
-			attribute.String("cluster", c.tc.SiteName),
-		),
-	)
-	defer span.End()
-
 	if params.RouteToCluster == "" {
 		params.RouteToCluster = c.tc.SiteName
 	}
@@ -436,7 +402,6 @@ func (c *ClusterClient) IssueUserCertsWithMFA(ctx context.Context, params Reissu
 				tc:          c.tc,
 				ProxyClient: c.ProxyClient,
 				AuthClient:  authClient,
-				Tracer:      c.Tracer,
 				cluster:     c.root,
 				root:        c.root,
 			}
@@ -466,7 +431,6 @@ func (c *ClusterClient) IssueUserCertsWithMFA(ctx context.Context, params Reissu
 			tc:          c.tc,
 			ProxyClient: c.ProxyClient,
 			AuthClient:  authClient,
-			Tracer:      c.Tracer,
 			cluster:     c.root,
 			root:        c.root,
 		}

@@ -49,8 +49,6 @@ import (
 	"github.com/gravitational/trace"
 	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 
@@ -79,7 +77,6 @@ import (
 	dtenroll "github.com/gravitational/teleport/lib/devicetrust/enroll"
 	// "github.com/gravitational/teleport/lib/kube/kubeconfig"
 	"github.com/gravitational/teleport/lib/modules"
-	"github.com/gravitational/teleport/lib/observability/tracing"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/session"
 	"github.com/gravitational/teleport/lib/shell"
@@ -440,9 +437,6 @@ type CLIConf struct {
 	// forwarding them to the Auth service.
 	TraceExporter string
 
-	// TracingProvider is the provider to use to create tracers, from which spans can be created.
-	TracingProvider oteltrace.TracerProvider
-
 	// disableAccessRequest disables automatic resource access requests. Deprecated in favor of RequestType.
 	disableAccessRequest bool
 
@@ -468,9 +462,6 @@ type CLIConf struct {
 
 	// Client only version display.  Skips checking proxy version.
 	clientOnlyVersionCheck bool
-
-	// tracer is the tracer used to trace tsh commands.
-	tracer oteltrace.Tracer
 
 	// Headless uses headless login for the client session.
 	Headless bool
@@ -655,7 +646,6 @@ func initLogger(cf *CLIConf) {
 func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	cf := CLIConf{
 		Context:            ctx,
-		TracingProvider:    tracing.NoopProvider(),
 		DTAuthnRunCeremony: dtauthn.NewCeremony().Run,
 		DTAutoEnroll:       dtenroll.AutoEnroll,
 	}
@@ -1100,15 +1090,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	// If TELEPORT_DEBUG was set, it was already enabled by prior call to initLogger().
 	initLogger(&cf)
 
-	stopTracing := initializeTracing(&cf)
-	defer stopTracing()
-
-	// start the span for the command and update the config context so that all spans created
-	// in the future will be rooted at this span.
-	ctx, span := cf.tracer.Start(cf.Context, command)
-	cf.Context = ctx
-	defer span.End()
-
 	if err := client.ValidateAgentKeyOption(cf.AddKeysToAgent); err != nil {
 		return trace.Wrap(err)
 	}
@@ -1271,12 +1252,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	}
 
 	return trace.Wrap(err)
-}
-
-func initializeTracing(cf *CLIConf) func() {
-	cf.TracingProvider = tracing.NoopProvider()
-	cf.tracer = cf.TracingProvider.Tracer(teleport.ComponentTSH)
-	return func() {}
 }
 
 // onVersion prints version info.
@@ -1780,8 +1755,6 @@ func (c *clusterClient) Close() error {
 // getClusterClients establishes a ProxyClient to every cluster
 // that the user has valid credentials for
 func getClusterClients(cf *CLIConf, resource string) ([]*clusterClient, error) {
-	tracer := cf.TracingProvider.Tracer(teleport.ComponentTSH)
-
 	// mu guards access to clusters
 	var (
 		mu       sync.Mutex
@@ -1789,13 +1762,6 @@ func getClusterClients(cf *CLIConf, resource string) ([]*clusterClient, error) {
 	)
 
 	err := forEachProfileParallel(cf, func(ctx context.Context, tc *client.TeleportClient, profile *client.ProfileStatus) error {
-		ctx, span := tracer.Start(
-			ctx,
-			"getClusterClient",
-			oteltrace.WithAttributes(attribute.String("cluster", profile.Cluster)),
-		)
-		defer span.End()
-
 		logger := log.WithField("cluster", profile.Cluster)
 
 		logger.Debug("Creating client...")
@@ -1892,7 +1858,6 @@ func (l nodeListings) Swap(i, j int) {
 }
 
 func listNodesAllClusters(cf *CLIConf) error {
-	tracer := cf.TracingProvider.Tracer(teleport.ComponentTSH)
 	clusters, err := getClusterClients(cf, types.KindNode)
 	if err != nil {
 		return trace.Wrap(err)
@@ -1925,11 +1890,7 @@ func listNodesAllClusters(cf *CLIConf) error {
 		}
 
 		group.Go(func() error {
-			ctx, span := tracer.Start(
-				groupCtx,
-				"ListNodes",
-				oteltrace.WithAttributes(attribute.String("cluster", cluster.name)))
-			defer span.End()
+			ctx := groupCtx
 
 			logger := log.WithField("cluster", cluster.name)
 			nodes, err := apiclient.GetAllResources[types.Server](ctx, cluster.auth, &cluster.req)
@@ -2927,8 +2888,7 @@ func makeClientForProxy(cf *CLIConf, proxy string) (*client.TeleportClient, erro
 		return nil, trace.Wrap(err)
 	}
 
-	ctx, span := c.Tracer.Start(cf.Context, "makeClientForProxy/init")
-	defer span.End()
+	ctx := cf.Context
 
 	tc, err := client.NewClient(c)
 	if err != nil {
@@ -2970,13 +2930,7 @@ func makeClientForProxy(cf *CLIConf, proxy string) (*client.TeleportClient, erro
 }
 
 func loadClientConfigFromCLIConf(cf *CLIConf, proxy string) (*client.Config, error) {
-	if cf.TracingProvider == nil {
-		cf.TracingProvider = tracing.NoopProvider()
-		cf.tracer = cf.TracingProvider.Tracer(teleport.ComponentTSH)
-	}
-
-	ctx, span := cf.tracer.Start(cf.Context, "loadClientConfigFromCLIConf")
-	defer span.End()
+	ctx := cf.Context
 
 	// Parse OpenSSH style options.
 	options, err := parseOptions(cf.Options)
@@ -3043,7 +2997,6 @@ func loadClientConfigFromCLIConf(cf *CLIConf, proxy string) (*client.Config, err
 	c := client.MakeDefaultConfig()
 
 	c.DialOpts = append(c.DialOpts, metadata.WithUserAgentFromTeleportComponent(teleport.ComponentTSH))
-	c.Tracer = cf.tracer
 
 	// Force the use of proxy template below.
 	useProxyTemplate := strings.Contains(cf.ProxyJump, "{{proxy}}")

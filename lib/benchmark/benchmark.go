@@ -36,7 +36,6 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/gravitational/teleport/lib/client"
-	"github.com/gravitational/teleport/lib/observability/tracing"
 )
 
 const (
@@ -284,7 +283,6 @@ func work(ctx context.Context, m benchMeasure, send chan<- benchMeasure, workloa
 func makeTeleportClient(host, login, proxy string) (*client.TeleportClient, error) {
 	c := client.Config{
 		Host:   host,
-		Tracer: tracing.NoopProvider().Tracer("test"),
 	}
 
 	if login != "" {

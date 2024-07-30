@@ -57,7 +57,6 @@ import (
 	devicepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/devicetrust/v1"
 	kubeproto "github.com/gravitational/teleport/api/gen/proto/go/teleport/kube/v1"
 	mfav1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/mfa/v1"
-	apitracing "github.com/gravitational/teleport/api/observability/tracing"
 	"github.com/gravitational/teleport/api/mfa"
 	tracessh "github.com/gravitational/teleport/api/observability/tracing/ssh"
 	"github.com/gravitational/teleport/api/profile"
@@ -1488,24 +1487,6 @@ func (tc *TeleportClient) WithRootClusterClient(ctx context.Context, do func(clt
 	defer clt.Close()
 
 	return trace.Wrap(do(clt))
-}
-
-// NewTracingClient provides a tracing client that will forward spans on to
-// the current clusters auth server. The auth server will then forward along to the configured
-// telemetry backend.
-func (tc *TeleportClient) NewTracingClient(ctx context.Context) (*apitracing.Client, error) {
-	clusterClient, err := tc.ConnectToCluster(ctx)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	cfg, err := clusterClient.ProxyClient.ClientConfig(ctx, clusterClient.ClusterName())
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	tracingClient, err := client.NewTracingClient(ctx, cfg)
-	return tracingClient, trace.Wrap(err)
 }
 
 // SSHOptions allow overriding configuration

@@ -86,7 +86,6 @@ import (
 	"github.com/gravitational/teleport/api/internalutils/stream"
 	"github.com/gravitational/teleport/api/metadata"
 	"github.com/gravitational/teleport/api/mfa"
-	"github.com/gravitational/teleport/api/observability/tracing"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/events"
 	"github.com/gravitational/teleport/api/types/wrappers"
@@ -158,18 +157,6 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return connect(ctx, cfg)
-}
-
-// NewTracingClient creates a new tracing.Client that will forward spans to the
-// connected Teleport server. See New for details on how the connection it
-// established.
-func NewTracingClient(ctx context.Context, cfg Config) (*tracing.Client, error) {
-	clt, err := New(ctx, cfg)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	return tracing.NewClient(clt.GetConnection()), nil
 }
 
 // NewOktaClient creates a new Okta client for managing Okta resources.

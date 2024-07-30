@@ -35,7 +35,6 @@ import (
 	"time"
 
 	"github.com/gravitational/trace"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/net/http/httpproxy"
 
 	"github.com/gravitational/teleport/api/constants"
@@ -113,8 +112,6 @@ func newWebClient(cfg *Config) (*http.Client, error) {
 // If these conditions are not met, then the plain-HTTP fallback is not allowed,
 // and a the HTTPS failure will be considered final.
 func doWithFallback(clt *http.Client, allowPlainHTTP bool, extraHeaders map[string]string, req *http.Request) (*http.Response, error) {
-	span := oteltrace.SpanFromContext(req.Context())
-
 	// first try https and see how that goes
 	req.URL.Scheme = "https"
 	for k, v := range extraHeaders {
@@ -123,7 +120,6 @@ func doWithFallback(clt *http.Client, allowPlainHTTP bool, extraHeaders map[stri
 
 	logger := slog.With("method", req.Method, "host", req.URL.Host, "path", req.URL.Path)
 	logger.DebugContext(req.Context(), "Attempting request to Proxy web api")
-	span.AddEvent("sending https request")
 	resp, err := clt.Do(req)
 
 	// If the HTTPS succeeds, return that.
@@ -142,7 +138,6 @@ func doWithFallback(clt *http.Client, allowPlainHTTP bool, extraHeaders map[stri
 	// clear-text HTTP to see if that works.
 	req.URL.Scheme = "http"
 	logger.WarnContext(req.Context(), "HTTPS request failed, falling back to HTTP")
-	span.AddEvent("falling back to http request")
 	resp, err = clt.Do(req)
 	if err != nil {
 		return nil, trace.Wrap(err)

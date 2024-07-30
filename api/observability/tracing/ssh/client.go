@@ -15,7 +15,6 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"sync"
@@ -23,14 +22,11 @@ import (
 
 	"github.com/gravitational/trace"
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gravitational/teleport/api/observability/tracing"
 )
 
 // Client is a wrapper around ssh.Client that adds tracing support.
 type Client struct {
 	*ssh.Client
-	opts       []tracing.Option
 	capability tracingCapability
 }
 
@@ -50,15 +46,10 @@ const (
 // payloads will be wrapped in an Envelope with tracing context. All Session
 // and Channel created from the returned Client will honor the clients view
 // of whether they should provide tracing context.
-func NewClient(c ssh.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request, opts ...tracing.Option) *Client {
+func NewClient(c ssh.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) *Client {
 	clt := &Client{
 		Client:     ssh.NewClient(c, chans, reqs),
-		opts:       opts,
 		capability: tracingUnsupported,
-	}
-
-	if bytes.HasPrefix(clt.ServerVersion(), []byte("SSH-2.0-Teleport")) {
-		clt.capability = tracingSupported
 	}
 
 	return clt
@@ -71,7 +62,6 @@ func (c *Client) DialContext(ctx context.Context, n, addr string) (net.Conn, err
 	wrapper := &clientWrapper{
 		capability: c.capability,
 		Conn:       c.Client.Conn,
-		opts:       c.opts,
 		ctx:        ctx,
 		contexts:   make(map[string][]context.Context),
 	}
@@ -100,7 +90,6 @@ func (c *Client) OpenChannel(
 	ch, reqs, err := c.Client.OpenChannel(name, data)
 	return &Channel{
 		Channel: ch,
-		opts:    c.opts,
 	}, reqs, err
 }
 
@@ -123,7 +112,6 @@ func (c *Client) newSession(ctx context.Context, chanReqCallback ChannelRequestC
 	wrapper := &clientWrapper{
 		capability: c.capability,
 		Conn:       c.Client.Conn,
-		opts:       c.opts,
 		ctx:        ctx,
 		contexts:   make(map[string][]context.Context),
 	}
@@ -145,8 +133,6 @@ type clientWrapper struct {
 	capability tracingCapability
 	// ctx the context which should be used to create spans from
 	ctx context.Context
-	// opts the tracing options to use for creating spans with
-	opts []tracing.Option
 
 	// lock protects the context queue
 	lock sync.Mutex

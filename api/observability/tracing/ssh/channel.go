@@ -18,22 +18,18 @@ import (
 	"context"
 
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gravitational/teleport/api/observability/tracing"
 )
 
 // Channel is a wrapper around ssh.Channel that adds tracing support.
 type Channel struct {
 	ssh.Channel
 	tracingSupported tracingCapability
-	opts             []tracing.Option
 }
 
 // NewTraceChannel creates a new Channel.
-func NewTraceChannel(ch ssh.Channel, opts ...tracing.Option) *Channel {
+func NewTraceChannel(ch ssh.Channel) *Channel {
 	return &Channel{
 		Channel: ch,
-		opts:    opts,
 	}
 }
 

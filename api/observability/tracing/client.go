@@ -16,11 +16,8 @@ package tracing
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/gravitational/trace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	otlp "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 )
@@ -35,7 +32,6 @@ import (
 // of the grpc.ClientConn. In an effort to reduce wasted bandwidth, the client merely drops any spans in
 // that case and returns nil.
 type Client struct {
-	otlptrace.Client
 	conn *grpc.ClientConn
 
 	// notImplementedFlag is set to indicate that the server does
@@ -47,23 +43,12 @@ type Client struct {
 // connect to the OpenTelemetry exporter.
 func NewClient(conn *grpc.ClientConn) *Client {
 	return &Client{
-		Client: otlptracegrpc.NewClient(otlptracegrpc.WithGRPCConn(conn)),
 		conn:   conn,
 	}
 }
 
 func (c *Client) UploadTraces(ctx context.Context, protoSpans []*otlp.ResourceSpans) error {
-	if len(protoSpans) == 0 || atomic.LoadInt32(&c.notImplementedFlag) == 1 {
-		return nil
-	}
-
-	err := c.Client.UploadTraces(ctx, protoSpans)
-	if err != nil && trace.IsNotImplemented(err) {
-		atomic.StoreInt32(&c.notImplementedFlag, 1)
-		return nil
-	}
-
-	return trace.Wrap(err)
+     return nil
 }
 
 // Close closes the underlying grpc.ClientConn. This is required since when

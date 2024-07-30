@@ -21,8 +21,6 @@ import (
 
 	"github.com/gravitational/trace"
 	"golang.org/x/crypto/ssh"
-
-	"github.com/gravitational/teleport/api/observability/tracing"
 )
 
 const (
@@ -68,13 +66,13 @@ type FileTransferDecisionReq struct {
 // initiates the SSH handshake, and then sets up a Client.  For access
 // to incoming channels and requests, use net.Dial with NewClientConn
 // instead.
-func Dial(ctx context.Context, network, addr string, config *ssh.ClientConfig, opts ...tracing.Option) (*Client, error) {
+func Dial(ctx context.Context, network, addr string, config *ssh.ClientConfig) (*Client, error) {
 	dialer := net.Dialer{Timeout: config.Timeout}
 	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
-	c, chans, reqs, err := NewClientConn(ctx, conn, addr, config, opts...)
+	c, chans, reqs, err := NewClientConn(ctx, conn, addr, config)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +81,7 @@ func Dial(ctx context.Context, network, addr string, config *ssh.ClientConfig, o
 
 // NewClientConn creates a new SSH client connection that is passed tracing context so that spans may be correlated
 // properly over the ssh connection.
-func NewClientConn(ctx context.Context, conn net.Conn, addr string, config *ssh.ClientConfig, opts ...tracing.Option) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+func NewClientConn(ctx context.Context, conn net.Conn, addr string, config *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		return nil, nil, nil, trace.Wrap(err)
@@ -93,13 +91,13 @@ func NewClientConn(ctx context.Context, conn net.Conn, addr string, config *ssh.
 }
 
 // NewClientConnWithDeadline establishes new client connection with specified deadline
-func NewClientConnWithDeadline(ctx context.Context, conn net.Conn, addr string, config *ssh.ClientConfig, opts ...tracing.Option) (*Client, error) {
+func NewClientConnWithDeadline(ctx context.Context, conn net.Conn, addr string, config *ssh.ClientConfig) (*Client, error) {
 	if config.Timeout > 0 {
 		if err := conn.SetReadDeadline(time.Now().Add(config.Timeout)); err != nil {
 			return nil, trace.Wrap(err)
 		}
 	}
-	c, chans, reqs, err := NewClientConn(ctx, conn, addr, config, opts...)
+	c, chans, reqs, err := NewClientConn(ctx, conn, addr, config)
 	if err != nil {
 		return nil, err
 	}
@@ -108,5 +106,5 @@ func NewClientConnWithDeadline(ctx context.Context, conn net.Conn, addr string, 
 			return nil, trace.Wrap(err)
 		}
 	}
-	return NewClient(c, chans, reqs, opts...), nil
+	return NewClient(c, chans, reqs), nil
 }

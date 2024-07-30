@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/gravitational/trace"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"google.golang.org/grpc"
@@ -290,7 +289,6 @@ func newGRPCClient(ctx context.Context, cfg *ClientConfig) (_ *Client, err error
 				append(cfg.UnaryInterceptors,
 					//nolint:staticcheck // SA1019. There is a data race in the stats.Handler that is replacing
 					// the interceptor. See https://github.com/open-telemetry/opentelemetry-go-contrib/issues/4576.
-					otelgrpc.UnaryClientInterceptor(),
 					metadata.UnaryClientInterceptor,
 					interceptors.GRPCClientUnaryErrorInterceptor,
 				)...,
@@ -299,7 +297,6 @@ func newGRPCClient(ctx context.Context, cfg *ClientConfig) (_ *Client, err error
 				append(cfg.StreamInterceptors,
 					//nolint:staticcheck // SA1019. There is a data race in the stats.Handler that is replacing
 					// the interceptor. See https://github.com/open-telemetry/opentelemetry-go-contrib/issues/4576.
-					otelgrpc.StreamClientInterceptor(),
 					metadata.StreamClientInterceptor,
 					interceptors.GRPCClientStreamErrorInterceptor,
 				)...,

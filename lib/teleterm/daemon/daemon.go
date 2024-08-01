@@ -43,7 +43,6 @@ import (
 	"github.com/gravitational/teleport/lib/teleterm/gateway"
 	"github.com/gravitational/teleport/lib/teleterm/services/unifiedresources"
 	"github.com/gravitational/teleport/lib/teleterm/services/userpreferences"
-	usagereporter "github.com/gravitational/teleport/lib/usagereporter/daemon"
 )
 
 const (
@@ -63,26 +62,18 @@ const (
 
 // New creates an instance of Daemon service
 func New(cfg Config) (*Service, error) {
-	if err := cfg.CheckAndSetDefaults(); err != nil {
+	err := cfg.CheckAndSetDefaults()
+	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
 	closeContext, cancel := context.WithCancel(context.Background())
-
-	connectUsageReporter, err := usagereporter.NewConnectUsageReporter(closeContext, cfg.PrehogAddr)
-	if err != nil {
-		cancel()
-		return nil, trace.Wrap(err)
-	}
-
-	go connectUsageReporter.Run(closeContext)
 
 	service := &Service{
 		cfg:                    &cfg,
 		closeContext:           closeContext,
 		cancel:                 cancel,
 		gateways:               make(map[string]gateway.Gateway),
-		usageReporter:          connectUsageReporter,
 		headlessWatcherClosers: make(map[string]context.CancelFunc),
 	}
 
@@ -762,11 +753,6 @@ func (s *Service) AssumeRole(ctx context.Context, req *api.AssumeRoleRequest) er
 
 
 func (s *Service) ReportUsageEvent(req *api.ReportUsageEventRequest) error {
-	prehogEvent, err := usagereporter.GetAnonymizedPrehogEvent(req)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	s.usageReporter.AddEventsToQueue(prehogEvent)
 	return nil
 }
 
@@ -785,13 +771,6 @@ func (s *Service) Stop() {
 
 	if err := s.clientCache.Clear(); err != nil {
 		s.cfg.Log.WithError(err).Error("Failed to close remote clients")
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(s.closeContext, time.Second*10)
-	defer cancel()
-
-	if err := s.usageReporter.GracefulStop(timeoutCtx); err != nil {
-		s.cfg.Log.WithError(err).Error("Gracefully stopping usage reporter failed")
 	}
 
 	// s.closeContext is used for the tshd events client which might make requests as long as any of
@@ -1132,8 +1111,6 @@ type Service struct {
 	//
 	// We use a waitSemaphore in order to make sure there is a clear transition between modals.
 	importantModalSemaphore *waitSemaphore
-	// usageReporter batches the events and sends them to prehog
-	usageReporter *usagereporter.UsageReporter
 	// reloginMu is used when a goroutine needs to request a relogin from the Electron app. Since the
 	// app can show only one login modal at a time, we need to submit only one request at a time.
 	reloginMu sync.Mutex
